@@ -7677,13 +7677,17 @@ function renderManagedUser(user, branches, callerId) {
     <dialog class="crud-dialog identity-dialog">
       <article class="panel">
         <div class="panel-header"><div><h2>Edit User</h2><p>Identity, email and temporary password.</p></div><button class="dialog-close cancel-user-edit" type="button" aria-label="Close">×</button></div>
-        <form class="identity-form" data-user-id="${user.id}">
-          <label>First name<input name="firstName" value="${escapeAttribute(user.first_name)}" required></label>
-          <label>Last name<input name="lastName" value="${escapeAttribute(user.last_name)}" required></label>
-          <label>Email<input name="email" type="email" value="${escapeAttribute(user.email || "")}" required></label>
-          <label>New temporary password<input name="password" type="password" minlength="8" placeholder="Leave blank to keep current"></label>
-          <button type="submit">Save user</button>
-          <button class="cancel-user-edit" type="button">Cancel</button>
+        <form class="record-form identity-form" data-user-id="${user.id}">
+          <label><span>First name</span><input name="firstName" value="${escapeAttribute(user.first_name)}" required></label>
+          <label><span>Last name</span><input name="lastName" value="${escapeAttribute(user.last_name)}" required></label>
+          <label><span>Email</span><input name="email" type="email" value="${escapeAttribute(user.email || "")}" required></label>
+          <label><span>New temporary password</span><input name="password" type="password" minlength="8" placeholder="Leave blank to keep current"></label>
+          <p class="form-help">Leave the password field blank unless you want to replace the user's current password.</p>
+          <div class="form-actions">
+            <button type="submit">Save user</button>
+            <button class="cancel-user-edit" type="button">Cancel</button>
+          </div>
+          <p class="form-message"></p>
         </form>
       </article>
     </dialog>
@@ -7774,6 +7778,9 @@ function bindUserManagement() {
   document.querySelectorAll(".identity-form").forEach((form) => form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = form.querySelector('button[type="submit"]');
+    const message = form.querySelector(".form-message");
+    message.dataset.state = "";
+    message.textContent = "";
     button.disabled = true;
     button.textContent = "Saving...";
     try {
@@ -7781,7 +7788,6 @@ function bindUserManagement() {
       settingsNotice = "User details updated successfully.";
       await loadSettings();
     } catch (error) {
-      const message = document.querySelector("#user-management-message");
       message.dataset.state = "error";
       message.textContent = error.message;
       button.disabled = false;

@@ -5013,33 +5013,47 @@ h3 {
   color: var(--muted);
 }
 
+.identity-dialog {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.identity-dialog .panel {
+  overflow: hidden;
+}
+
 .identity-form {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr)) auto auto;
-  gap: 10px;
-  align-items: end;
-  border-top: 1px dashed var(--line);
+  border-top: 1px solid var(--line);
   background: var(--surface-soft);
-  padding: 14px 16px;
 }
 
 .identity-form[hidden] {
   display: none;
 }
 
-.identity-dialog {
-  width: min(760px, calc(100vw - 32px));
-}
-
 .identity-dialog .identity-form {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  padding: 18px;
 }
 
-.identity-form label {
-  display: grid;
-  gap: 5px;
+.identity-dialog .identity-form .form-help,
+.identity-dialog .identity-form .form-actions,
+.identity-dialog .identity-form .form-message {
+  grid-column: 1 / -1;
+}
+
+.identity-dialog .identity-form .form-help {
+  margin: -4px 0 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.identity-dialog .identity-form .form-actions {
+  justify-content: flex-start;
+}
+
+.identity-dialog .identity-form .form-actions button {
+  flex: 0 1 180px;
 }
 
 .access-form,
@@ -5136,13 +5150,12 @@ h3 {
 
   .access-form,
   .managed-user-actions,
-  .identity-form,
   .portal-access-form {
     flex-wrap: wrap;
   }
 
   .identity-form {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   .portal-access-row,
