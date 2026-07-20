@@ -11,7 +11,7 @@
     <section id="auth-screen" class="auth-screen" hidden>
       <form id="login-form" class="login-panel">
         <div class="brand login-brand">
-          <span class="brand-mark">C</span>
+          <img class="brand-logo" src="assets/cyrra-logo.png" alt="Cyrra logo" />
           <div>
             <strong>Cyrra TMS</strong>
             <small>Operations login</small>
@@ -36,7 +36,7 @@
     <div id="app-shell" class="app-shell" hidden>
       <aside class="sidebar" aria-label="Main navigation">
         <div class="brand">
-          <span class="brand-mark">Cy</span>
+          <img class="brand-logo" src="assets/cyrra-logo.png" alt="Cyrra logo" />
           <div>
             <strong>Cyrra TMS</strong>
             <small>Transport suite</small>
@@ -47,16 +47,23 @@
           <span class="nav-section">Home</span>
           <a class="active" href="#dashboard" data-route="dashboard">Dashboard</a>
           <a href="#loads" data-route="loads">Orders / Loads</a>
+          <a href="#quotes" data-route="quotes">Quotes / Rates</a>
           <a href="#dispatch" data-route="dispatch">Dispatch Board</a>
           <a href="#tracking" data-route="tracking">Fleet Map</a>
+          <a href="#driver" data-route="driver">Driver App</a>
+          <a href="#customer_portal" data-route="customer_portal">Customer Portal</a>
+          <a href="#carrier_portal" data-route="carrier_portal">Carrier Portal</a>
           <span class="nav-section">Operations</span>
           <a href="#drivers" data-route="drivers">Drivers</a>
           <a href="#equipment" data-route="equipment">Equipment</a>
+          <a href="#maintenance" data-route="maintenance">Maintenance</a>
           <a href="#customers" data-route="customers">Customers</a>
           <a href="#carriers" data-route="carriers">Carriers</a>
           <span class="nav-section">Back office</span>
           <a href="#documents" data-route="documents">Documents</a>
           <a href="#billing" data-route="billing">Billing</a>
+          <a href="#settlements" data-route="settlements">Settlements</a>
+          <a href="#notifications" data-route="notifications">Notifications <span id="nav-notification-count" class="nav-count" hidden>0</span></a>
           <a href="#reports" data-route="reports">Reports</a>
           <a href="#settings" data-route="settings">Settings</a>
         </nav>
@@ -64,11 +71,14 @@
 
       <main class="workspace">
         <header class="topbar">
-          <label class="search-box">
-            <span>Search</span>
-            <input id="global-search" type="search" placeholder="Load, customer, driver, truck, invoice..." />
-          </label>
+          <div class="search-box">
+            <label for="global-search">Search</label>
+            <input id="global-search" type="search" placeholder="Load, customer, driver, truck, invoice..." autocomplete="off" aria-controls="global-search-results" aria-expanded="false" />
+            <div id="global-search-results" class="global-search-results" role="listbox" hidden></div>
+          </div>
           <div class="topbar-actions">
+            <span id="environment-badge" class="environment-badge" aria-label="Active environment"></span>
+            <a id="notification-button" class="topbar-link" href="#notifications">Notifications <span id="topbar-notification-count" hidden>0</span></a>
             <button id="refresh-data" type="button">Refresh</button>
             <button id="add-order-button" type="button">Add Order</button>
             <button id="logout-button" type="button">Logout</button>
@@ -82,6 +92,7 @@
     </div>
 
     <script src="https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.js"></script>
+    <script src="vendor/fflate/fflate.js"></script>
     <script type="module" src="js/app.js"></script>
   </body>
 </html>
