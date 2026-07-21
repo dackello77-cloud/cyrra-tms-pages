@@ -7124,7 +7124,7 @@ async function loadSettings() {
               <p>Create a confirmed account or email an invitation.</p>
             </div>
           </div>
-          ${renderUserCreateForm(directory.branches)}
+          ${renderUserCreateForm(directory.branches, directory.drivers || [])}
         </article>
       </section>
       <section id="user-directory-panel" class="panel">
@@ -7215,7 +7215,7 @@ async function loadSettings() {
     document.querySelector("#company-billing-form").addEventListener("submit", handleCompanyBillingSave);
     document.querySelectorAll("[data-company-tenant-form]").forEach((form) => form.addEventListener("submit", handleCompanyTenantSave));
     bindIntegrationFoundation();
-    bindUserManagement(directory.branches);
+    bindUserManagement(directory.branches, directory.drivers || []);
     bindPortalManagement();
     bindCarrierPortalManagement();
     configureCrudFormAccess("#create-user-form", "manage_users", "Add User", resetCreateUserForm, "#user-directory-panel");
@@ -7555,7 +7555,22 @@ function customerOptions(customers, selectedId = "") {
     .join("");
 }
 
-function renderUserCreateForm(branches) {
+function driverOptions(drivers = []) {
+  return drivers
+    .map((driver) => {
+      const linked = Boolean(driver.auth_user_id);
+      const label = [
+        driver.name || "Unnamed driver",
+        driver.email || "No email",
+        driver.branches?.name || "Branch",
+        linked ? "linked" : "",
+      ].filter(Boolean).join(" · ");
+      return `<option value="${driver.id}" data-branch-id="${escapeAttribute(driver.branch_id || "")}" ${linked ? "disabled" : ""}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+}
+
+function renderUserCreateForm(branches, drivers = []) {
   return `
     <form id="create-user-form" class="record-form compact-form">
       <label>First name<input name="firstName" type="text" required autocomplete="off"></label>
@@ -7569,6 +7584,11 @@ function renderUserCreateForm(branches) {
         <select name="role">${["admin", "dispatcher", "accounting", "safety", "driver", "owner"].map((role) => `<option value="${role}">${formatStatus(role)}</option>`).join("")}</select>
       </label>
       <label class="branch-field">Branch<select name="branchId" required>${branchOptions(branches)}</select></label>
+      <label class="driver-profile-field" hidden>Driver profile
+        <select name="driverId" ${drivers.length ? "" : "disabled"}>
+          ${drivers.length ? '<option value="">Select driver profile</option>' + driverOptions(drivers) : '<option value="">No drivers available</option>'}
+        </select>
+      </label>
       <label>Status<select name="status"><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
       <div class="form-actions"><button type="submit">Add user</button><span class="form-message"></span></div>
     </form>
@@ -7694,20 +7714,36 @@ function renderManagedUser(user, branches, callerId) {
   `;
 }
 
-function bindUserManagement() {
+function bindUserManagement(branches = [], drivers = []) {
   const createForm = document.querySelector("#create-user-form");
   const mode = createForm.querySelector('[name="mode"]');
   const role = createForm.querySelector('[name="role"]');
   const passwordField = createForm.querySelector(".password-field");
   const branchField = createForm.querySelector(".branch-field");
+  const branchSelect = branchField.querySelector("select");
+  const driverProfileField = createForm.querySelector(".driver-profile-field");
+  const driverProfileSelect = driverProfileField.querySelector("select");
+  const createSubmit = createForm.querySelector('button[type="submit"]');
   const syncCreateFields = () => {
     passwordField.hidden = mode.value !== "create";
     passwordField.querySelector("input").required = mode.value === "create";
     branchField.hidden = role.value === "owner";
-    branchField.querySelector("select").required = role.value !== "owner";
+    branchSelect.required = role.value !== "owner";
+    driverProfileField.hidden = role.value !== "driver";
+    driverProfileSelect.required = role.value === "driver";
+    if (role.value !== "driver") driverProfileSelect.value = "";
+    createSubmit.disabled = role.value === "driver" && !drivers.some((driver) => !driver.auth_user_id);
+  };
+  const syncDriverBranch = () => {
+    const selectedDriver = drivers.find((driver) => driver.id === driverProfileSelect.value);
+    if (selectedDriver?.branch_id) branchSelect.value = selectedDriver.branch_id;
   };
   mode.addEventListener("change", syncCreateFields);
-  role.addEventListener("change", syncCreateFields);
+  role.addEventListener("change", () => {
+    syncCreateFields();
+    syncDriverBranch();
+  });
+  driverProfileSelect.addEventListener("change", syncDriverBranch);
   syncCreateFields();
 
   createForm.addEventListener("submit", async (event) => {
