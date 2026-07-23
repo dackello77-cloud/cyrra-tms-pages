@@ -97,6 +97,12 @@ export function invoiceFinancialState(invoice, today) {
   return { paid, credited, balance, collectible, daysPastDue, displayStatus };
 }
 
+export const manualInvoiceStatusOptions = ["draft", "sent", "void"];
+
+export function canManuallySetInvoiceStatus(status) {
+  return manualInvoiceStatusOptions.includes(status);
+}
+
 export function invoiceBatchCandidates(invoices = [], today = "") {
   return invoices
     .map((invoice) => ({ ...invoice, financialState: invoiceFinancialState(invoice, today) }))

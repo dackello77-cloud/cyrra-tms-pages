@@ -177,6 +177,7 @@ import {
   invoiceBatchCandidates,
   invoiceFinancialState,
   invoiceLineItemsTotal,
+  canManuallySetInvoiceStatus,
   integrationHealthSummary,
   notificationDeliverySummary,
   notificationEventTypes,
@@ -220,6 +221,7 @@ import {
   reportRecordValue,
   validateProfileFinancialTerms,
   validateStopWindows,
+  manualInvoiceStatusOptions,
 } from "./domain.js";
 
 const authScreen = document.querySelector("#auth-screen");
@@ -4940,6 +4942,14 @@ async function handleDispatchStatusChange(event) {
 }
 
 const invoiceStatuses = ["draft", "sent", "partial", "paid", "overdue", "void"];
+
+function renderInvoiceStatusOptions(displayStatus) {
+  const lockedCurrent = canManuallySetInvoiceStatus(displayStatus)
+    ? ""
+    : `<option value="${displayStatus}" selected disabled>${formatStatus(displayStatus)}</option>`;
+  return `${lockedCurrent}${manualInvoiceStatusOptions.map((status) => `<option value="${status}" ${status === displayStatus ? "selected" : ""}>${formatStatus(status)}</option>`).join("")}`;
+}
+
 const invoiceLineItemTypeOptions = [
   ["linehaul", "Linehaul"],
   ["fsc", "Fuel surcharge"],
@@ -5668,7 +5678,7 @@ async function loadInvoices() {
               ${invoiceListState.columns.includes("amount") ? `<span>${formatMoney(invoice.amount)}<small class="invoice-balance">${(invoice.invoice_line_items || []).length || (invoice.line_items_snapshot || []).length || 1} line(s) · Balance ${formatMoney(balance)}</small></span>` : ""}
               ${invoiceListState.columns.includes("due") ? `<span>${formatDate(invoice.due_date)}</span>` : ""}
               ${invoiceListState.columns.includes("status") ? `<select class="invoice-status-select" data-invoice-status="${invoice.id}" aria-label="Change status for ${escapeHtml(invoice.invoice_no)}">
-                  ${invoiceStatuses.map((status) => `<option value="${status}" ${status === displayStatus ? "selected" : ""}>${formatStatus(status)}</option>`).join("")}
+                  ${renderInvoiceStatusOptions(displayStatus)}
               </select>` : ""}
               <div class="invoice-row-actions">
                 <button type="button" data-preview-invoice="${invoice.id}">Preview</button>
@@ -6118,6 +6128,12 @@ async function handleInvoiceStatusChange(event) {
   const select = event.currentTarget;
   const invoiceId = select.dataset.invoiceStatus;
   const status = select.value;
+
+  if (!canManuallySetInvoiceStatus(status)) {
+    await loadInvoices();
+    window.alert("Partial, Paid and Overdue are calculated from payments, credits and due dates. Use Payment or Credits to change the balance.");
+    return;
+  }
 
   select.disabled = true;
 
