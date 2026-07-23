@@ -606,13 +606,25 @@ if (environmentBadge) {
 signupButton.hidden = isProduction;
 signupButton.disabled = isProduction;
 
-function route() {
-  const requested = window.location.hash.replace("#", "");
-  if (requested.startsWith("loads/")) return "loads";
-  if (requested) return requested;
+function defaultRouteForCurrentRoles() {
   if (currentRoles.includes("customer_portal") && currentRoles.length === 1) return "customer_portal";
   if (currentRoles.includes("carrier_portal") && currentRoles.length === 1) return "carrier_portal";
   return currentRoles.includes("driver") && currentRoles.length === 1 ? "driver" : "dashboard";
+}
+
+function route() {
+  const requested = window.location.hash.replace("#", "");
+  const requestedRoute = requested.startsWith("loads/") ? "loads" : requested;
+  const defaultRoute = defaultRouteForCurrentRoles();
+  const portalOnlyHome = ["customer_portal", "carrier_portal", "driver"].includes(defaultRoute) ? defaultRoute : "";
+
+  if (portalOnlyHome && requestedRoute && !can(`view_${requestedRoute}`)) {
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${portalOnlyHome}`);
+    return portalOnlyHome;
+  }
+
+  if (requestedRoute) return requestedRoute;
+  return defaultRoute;
 }
 
 function loadIdFromHash() {
@@ -757,12 +769,18 @@ function updateProfileBadge() {
 }
 
 function renderAccessDenied(activeRoute) {
+  const homeRoute = defaultRouteForCurrentRoles();
+  const homeLabel = {
+    customer_portal: "Return to Customer Portal",
+    carrier_portal: "Return to Carrier Portal",
+    driver: "Return to Driver App",
+  }[homeRoute] || "Return to Dashboard";
   pageRoot.innerHTML = `
     ${renderPageHeader({ eyebrow: "Access", title: "Access Restricted" })}
     <section class="panel access-denied-panel">
       <h2>${accessLoadError ? "Access profile unavailable" : "This module is not assigned to your role"}</h2>
       <p>${escapeHtml(accessLoadError || `Your active role (${currentRoles.map(formatStatus).join(", ") || "none"}) cannot open ${formatStatus(activeRoute)}.`)}</p>
-      <a class="button-link" href="#dashboard">Return to Dashboard</a>
+      <a class="button-link" href="#${homeRoute}">${homeLabel}</a>
     </section>`;
 }
 
