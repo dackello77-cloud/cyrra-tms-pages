@@ -1269,9 +1269,10 @@ function renderCustomerPortalLoad(load, documents = [], invoices = []) {
 function renderCustomerPortalInvoice(invoice) {
   const { balance, displayStatus } = invoiceFinancialState(invoice, localDateIso());
   const customerBalance = invoice.status === "paid" ? 0 : balance;
+  const loadLabel = invoice.loads?.load_no ? `Load ${invoice.loads.load_no}` : "Shipment invoice";
   return `
     <article class="portal-invoice-row">
-      <div><strong>${escapeHtml(invoice.invoice_no)}</strong><span>${escapeHtml(invoice.loads?.load_no || "Shipment invoice")}</span></div>
+      <div class="portal-invoice-title"><strong>${escapeHtml(invoice.invoice_no)}</strong><span>${escapeHtml(loadLabel)}</span></div>
       <span class="status-pill">${escapeHtml(formatStatus(displayStatus))}</span>
       <small>${formatMoney(invoice.amount)} · balance ${formatMoney(customerBalance)} · due ${formatDate(invoice.due_date)}</small>
     </article>`;

@@ -4562,6 +4562,23 @@ h3 {
   gap: 12px;
 }
 
+.portal-invoice-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.portal-invoice-title span {
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 3px 8px;
+}
+
 .portal-load-card h2 {
   margin: 2px 0 0;
   font-size: 1.15rem;
