@@ -233,6 +233,7 @@ const pageRoot = document.querySelector("#page-root");
 const navLinks = Array.from(document.querySelectorAll(".nav-list a"));
 const refreshButton = document.querySelector("#refresh-data");
 const environmentBadge = document.querySelector("#environment-badge");
+const profileBadge = document.querySelector("#profile-badge");
 const globalSearch = document.querySelector("#global-search");
 const globalSearchResults = document.querySelector("#global-search-results");
 const isProduction = appConfig.name === "production";
@@ -688,8 +689,61 @@ function applyRoleAwareShell() {
   notificationButton.hidden = !can("view_notifications");
   const avatar = document.querySelector(".user-avatar");
   const roleLabel = currentRoles.length ? currentRoles.map(formatStatus).join(", ") : "No active role";
+  updateProfileBadge();
   avatar.title = roleLabel;
   avatar.setAttribute("aria-label", roleLabel);
+}
+
+function accessScopeLabel() {
+  const branchNames = currentAccess
+    .map((access) => access.branches?.name)
+    .filter(Boolean);
+  const customerNames = currentPortalAccess
+    .map((access) => access.customers?.name)
+    .filter(Boolean);
+  const carrierNames = currentCarrierPortalAccess
+    .map((access) => access.carriers?.name)
+    .filter(Boolean);
+  const scopes = [
+    ...branchNames.map((name) => `Branch: ${name}`),
+    ...customerNames.map((name) => `Customer: ${name}`),
+    ...carrierNames.map((name) => `Carrier: ${name}`),
+  ];
+  return scopes.length ? [...new Set(scopes)].join(" · ") : "No active scope";
+}
+
+function userDisplayName() {
+  const metadata = currentSession?.user?.user_metadata || {};
+  const fullName = [metadata.first_name, metadata.last_name].filter(Boolean).join(" ").trim();
+  return fullName || metadata.full_name || metadata.name || currentSession?.user?.email || "Signed out";
+}
+
+function userInitials(name) {
+  const text = String(name || currentSession?.user?.email || "U").trim();
+  const parts = text.includes("@") ? [text.charAt(0)] : text.split(/\s+/).filter(Boolean);
+  return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : parts[0]?.slice(0, 2) || "U").toUpperCase();
+}
+
+function updateProfileBadge() {
+  const avatar = document.querySelector(".user-avatar");
+  if (!profileBadge || !avatar) return;
+  if (!currentSession) {
+    profileBadge.innerHTML = '<span class="profile-badge-label">Signed out</span><strong>Not connected</strong><small>No active role</small>';
+    profileBadge.title = "No active session";
+    avatar.textContent = "MS";
+    return;
+  }
+  const name = userDisplayName();
+  const roles = currentRoles.length ? currentRoles.map(formatStatus).join(", ") : "No active role";
+  const scope = accessScopeLabel();
+  const email = currentSession.user.email || "";
+  profileBadge.innerHTML = `
+    <span class="profile-badge-label">${escapeHtml(appConfig.name)}</span>
+    <strong>${escapeHtml(name)}</strong>
+    <small>${escapeHtml(roles)} · ${escapeHtml(scope)}</small>
+  `;
+  profileBadge.title = [email, roles, scope].filter(Boolean).join(" · ");
+  avatar.textContent = userInitials(name);
 }
 
 function renderAccessDenied(activeRoute) {
@@ -2333,6 +2387,19 @@ function renderDrivers() {
           </label>
           <label><span>Pay type</span><select name="pay_type"><option value="">Not set</option><option value="per_mile">Per mile</option><option value="percentage">Percentage</option><option value="hourly">Hourly</option><option value="salary">Salary</option><option value="per_load">Per load</option></select></label>
           <label><span>Pay rate</span><input name="pay_rate" type="number" min="0" step="0.01" /></label>
+          ${can("manage_users") ? `
+            <section class="driver-credential-box" data-driver-credential-box>
+              <label class="checkbox-row">
+                <input name="create_driver_login" type="checkbox" />
+                <span>Create Driver App login now</span>
+              </label>
+              <div class="driver-credential-fields" hidden>
+                <label><span>Login email</span><input name="login_email" type="email" autocomplete="off" /></label>
+                <label><span>Temporary password</span><input name="login_password" type="password" minlength="8" autocomplete="new-password" /></label>
+                <p class="form-help">Password is used once to create the Auth user. It is not saved in the driver profile or shown later.</p>
+              </div>
+            </section>
+          ` : ""}
           <div class="form-actions">
             <button id="driver-submit" type="submit">Save Driver</button>
             <button id="cancel-driver-edit" type="button" hidden>Cancel edit</button>
@@ -2347,6 +2414,7 @@ function renderDrivers() {
   document.querySelector("#driver-form").addEventListener("submit", handleCreateDriver);
   document.querySelector("#cancel-driver-edit").addEventListener("click", resetDriverForm);
   document.querySelector("#close-business-profile").addEventListener("click", () => document.querySelector("#business-profile-dialog").close());
+  bindDriverCredentialFields();
   configureCrudFormAccess("#driver-form", "manage_assets", "Add Driver", resetDriverForm);
   loadDrivers();
 }
@@ -2369,6 +2437,7 @@ async function loadDrivers() {
         <span>Status</span>
         <span>Phone</span>
         <span>CDL / Medical</span>
+        <span>Driver App</span>
         <span></span>
       </div>
       ${drivers
@@ -2379,6 +2448,7 @@ async function loadDrivers() {
               <span>${formatStatus(driver.status)}</span>
               <span>${escapeHtml(driver.phone || "-")}</span>
               <span>${formatDate(driver.cdl_expiry)} / ${formatDate(driver.medical_expiry)}</span>
+              ${renderDriverAppAccess(driver)}
               <div class="table-tools"><button class="row-action" type="button" data-open-profile="driver" data-profile-id="${driver.id}">Open</button>${can("manage_assets") ? `<button class="row-action" type="button" data-edit-driver="${driver.id}">Edit</button>` : ""}</div>
             </div>
           `
@@ -2400,6 +2470,14 @@ async function loadDrivers() {
   }
 }
 
+function renderDriverAppAccess(driver) {
+  const linked = Boolean(driver.auth_user_id);
+  return `<span class="driver-app-access" data-linked="${linked ? "true" : "false"}">
+    <strong>${linked ? "Linked" : "No login"}</strong>
+    <small>${linked ? escapeHtml(driver.email || "Driver App enabled") : "Create from Add Driver or Settings"}</small>
+  </span>`;
+}
+
 function fillDriverForm(driver) {
   const form = document.querySelector("#driver-form");
   form.elements.id.value = driver.id;
@@ -2416,6 +2494,7 @@ function fillDriverForm(driver) {
   document.querySelector("#driver-submit").textContent = "Update Driver";
   document.querySelector("#cancel-driver-edit").hidden = false;
   document.querySelector("#driver-message").textContent = "";
+  setDriverCredentialBoxEnabled(false);
   openFormDialog(form);
 }
 
@@ -2427,7 +2506,49 @@ function resetDriverForm() {
   document.querySelector("#driver-submit").textContent = "Save Driver";
   document.querySelector("#cancel-driver-edit").hidden = true;
   document.querySelector("#driver-message").textContent = "";
+  setDriverCredentialBoxEnabled(true);
   closeFormDialog(form);
+}
+
+function bindDriverCredentialFields() {
+  const form = document.querySelector("#driver-form");
+  const checkbox = form?.elements.create_driver_login;
+  if (!form || !checkbox) return;
+  const fields = form.querySelector(".driver-credential-fields");
+  const loginEmail = form.elements.login_email;
+  const password = form.elements.login_password;
+  const sync = () => {
+    const enabled = checkbox.checked && !form.elements.id.value;
+    fields.hidden = !enabled;
+    loginEmail.required = enabled;
+    password.required = enabled;
+    if (enabled && !loginEmail.value) loginEmail.value = form.elements.email.value || "";
+  };
+  checkbox.addEventListener("change", sync);
+  form.elements.email.addEventListener("input", () => {
+    if (checkbox.checked) loginEmail.value = form.elements.email.value || "";
+  });
+  sync();
+}
+
+function setDriverCredentialBoxEnabled(enabled) {
+  const form = document.querySelector("#driver-form");
+  const box = form?.querySelector("[data-driver-credential-box]");
+  const checkbox = form?.elements.create_driver_login;
+  if (!box || !checkbox) return;
+  box.hidden = !enabled;
+  checkbox.checked = false;
+  box.querySelector(".driver-credential-fields").hidden = true;
+  if (form.elements.login_email) form.elements.login_email.required = false;
+  if (form.elements.login_password) form.elements.login_password.required = false;
+}
+
+function driverNameParts(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] || "Driver",
+    lastName: parts.length > 1 ? parts.slice(1).join(" ") : "User",
+  };
 }
 
 async function handleCreateDriver(event) {
@@ -2459,14 +2580,30 @@ async function handleCreateDriver(event) {
     };
     validateProfileFinancialTerms({ payRate: payload.pay_rate });
 
+    let savedDriver;
     if (driverId) {
-      await updateDriver(driverId, payload);
+      savedDriver = await updateDriver(driverId, payload);
     } else {
-      await createDriver(payload);
+      savedDriver = await createDriver(payload);
+      if (formData.get("create_driver_login") === "on") {
+        const branchId = savedDriver.branch_id || currentAccess.find((access) => access.branch_id)?.branch_id;
+        if (!branchId) throw new Error("Driver was saved, but login was not created because a branch is required.");
+        const { firstName, lastName } = driverNameParts(savedDriver.name);
+        await manageTmsUsers("create", {
+          firstName,
+          lastName,
+          email: formData.get("login_email") || savedDriver.email,
+          password: formData.get("login_password"),
+          role: "driver",
+          branchId,
+          driverId: savedDriver.id,
+          status: "active",
+        });
+      }
     }
 
     resetDriverForm();
-    message.textContent = driverId ? "Driver updated." : "Driver saved.";
+    message.textContent = driverId ? "Driver updated." : formData.get("create_driver_login") === "on" ? "Driver and Driver App login created." : "Driver saved.";
     await loadDrivers();
   } catch (error) {
     message.textContent = error.message;
@@ -7101,6 +7238,14 @@ async function loadSettings() {
       listCompanyTenants(),
       loadIntegrationFoundation(),
     ]);
+    if (!(directory.drivers || []).length) {
+      try {
+        directory.drivers = await listDrivers();
+      } catch {
+        directory.drivers = [];
+      }
+    }
+    const internalUsers = (directory.users || []).filter(isInternalStaffUser);
 
     root.innerHTML = `
       <section class="settings-grid">
@@ -7124,20 +7269,20 @@ async function loadSettings() {
               <p>Create a confirmed account or email an invitation.</p>
             </div>
           </div>
-          ${renderUserCreateForm(directory.branches, directory.drivers || [])}
+          ${renderUserCreateForm(directory.branches)}
         </article>
       </section>
       <section id="user-directory-panel" class="panel">
         <div class="panel-header">
           <div>
-            <h2>User Directory</h2>
-            <p>${directory.users.length} Auth user${directory.users.length === 1 ? "" : "s"}; access changes are Owner-only and audited.</p>
+            <h2>Internal Users</h2>
+            <p>${internalUsers.length} staff user${internalUsers.length === 1 ? "" : "s"}; driver and portal accounts live in their own tabs.</p>
           </div>
           <button id="reload-settings" type="button">Refresh</button>
         </div>
         <div id="user-management-message" class="form-message">${escapeHtml(settingsNotice)}</div>
         <div class="user-directory">
-          ${directory.users.map((user) => renderManagedUser(user, directory.branches, directory.callerId)).join("")}
+          ${internalUsers.length ? internalUsers.map((user) => renderManagedUser(user, directory.branches, directory.callerId)).join("") : '<div class="empty-state compact-empty">No internal staff users yet.</div>'}
         </div>
       </section>
       <section id="customer-portal-access-panel" class="panel">
@@ -7146,32 +7291,44 @@ async function loadSettings() {
             <h2>Customer Portal Access</h2>
             <p>Create external customer accounts and scope them to one customer record.</p>
           </div>
-        </div>
-        <div class="portal-management-grid">
-          <div class="portal-management-forms">
-            ${renderCustomerPortalCreateForm(directory.customers || [])}
-            ${renderExistingPortalGrantForm(directory.users || [], directory.customers || [])}
+          <div class="panel-actions">
+            <button type="button" data-open-customer-portal-create>Add Portal User</button>
+            <button type="button" data-open-customer-portal-grant>Grant Existing</button>
           </div>
-          <section class="portal-access-directory">
-            ${(directory.users || []).some((user) => user.portal_access?.length)
-              ? directory.users.flatMap((user) => (user.portal_access || []).map((access) => renderPortalManagedAccess(user, access, directory.customers || []))).join("")
-              : '<div class="empty-state compact-empty">No customer portal access has been granted yet.</div>'}
-          </section>
         </div>
+        <div class="form-message portal-management-message"></div>
+        ${renderSettingsFormDialog("customer-portal-create-dialog", "Add Customer Portal User", "Create login credentials and customer scope.", renderCustomerPortalCreateForm(directory.customers || []))}
+        ${renderSettingsFormDialog("customer-portal-grant-dialog", "Grant Customer Portal Access", "Attach an existing Auth user to a customer account.", renderExistingPortalGrantForm(directory.users || [], directory.customers || []))}
+        <section class="portal-access-directory settings-access-directory">
+          ${(directory.users || []).some((user) => user.portal_access?.length)
+            ? directory.users.flatMap((user) => (user.portal_access || []).map((access) => renderPortalManagedAccess(user, access, directory.customers || []))).join("")
+            : '<div class="empty-state compact-empty">No customer portal access has been granted yet.</div>'}
+        </section>
       </section>
       <section id="carrier-portal-access-panel" class="panel">
-        <div class="panel-header"><div><h2>Carrier Portal Access</h2><p>Create external carrier accounts and scope them to one carrier record.</p></div></div>
-        <div class="portal-management-grid">
-          <div class="portal-management-forms">
-            ${renderCarrierPortalCreateForm(directory.carriers || [])}
-            ${renderExistingCarrierPortalGrantForm(directory.users || [], directory.carriers || [])}
+        <div class="panel-header"><div><h2>Carrier Portal Access</h2><p>Create external carrier accounts and scope them to one carrier record.</p></div>
+          <div class="panel-actions">
+            <button type="button" data-open-carrier-portal-create>Add Carrier User</button>
+            <button type="button" data-open-carrier-portal-grant>Grant Existing</button>
           </div>
-          <section class="portal-access-directory">
-            ${(directory.users || []).some((user) => user.carrier_portal_access?.length)
-              ? directory.users.flatMap((user) => (user.carrier_portal_access || []).map((access) => renderCarrierPortalManagedAccess(user, access, directory.carriers || []))).join("")
-              : '<div class="empty-state compact-empty">No carrier portal access has been granted yet.</div>'}
-          </section>
         </div>
+        <div class="form-message portal-management-message"></div>
+        ${renderSettingsFormDialog("carrier-portal-create-dialog", "Add Carrier Portal User", "Create login credentials and carrier scope.", renderCarrierPortalCreateForm(directory.carriers || []))}
+        ${renderSettingsFormDialog("carrier-portal-grant-dialog", "Grant Carrier Portal Access", "Attach an existing Auth user to a carrier account.", renderExistingCarrierPortalGrantForm(directory.users || [], directory.carriers || []))}
+        <section class="portal-access-directory settings-access-directory">
+          ${(directory.users || []).some((user) => user.carrier_portal_access?.length)
+            ? directory.users.flatMap((user) => (user.carrier_portal_access || []).map((access) => renderCarrierPortalManagedAccess(user, access, directory.carriers || []))).join("")
+            : '<div class="empty-state compact-empty">No carrier portal access has been granted yet.</div>'}
+        </section>
+      </section>
+      <section id="driver-app-access-panel" class="panel">
+        <div class="panel-header"><div><h2>Driver App Access</h2><p>Create or maintain Driver App logins from the driver profile list.</p></div></div>
+        <div id="driver-app-management-message" class="form-message"></div>
+        <section class="driver-app-directory">
+          ${(directory.drivers || []).length
+            ? directory.drivers.map((driver) => renderDriverAppAccessRow(driver, directory.users || [])).join("")
+            : '<div class="empty-state compact-empty">No driver profiles yet.</div>'}
+        </section>
       </section>
       ${renderCompanyTenantPanel(tenants)}
       <section id="company-billing-panel" class="panel">
@@ -7216,6 +7373,7 @@ async function loadSettings() {
     document.querySelectorAll("[data-company-tenant-form]").forEach((form) => form.addEventListener("submit", handleCompanyTenantSave));
     bindIntegrationFoundation();
     bindUserManagement(directory.branches, directory.drivers || []);
+    bindDriverAppManagement(directory.drivers || []);
     bindPortalManagement();
     bindCarrierPortalManagement();
     configureCrudFormAccess("#create-user-form", "manage_users", "Add User", resetCreateUserForm, "#user-directory-panel");
@@ -7224,12 +7382,13 @@ async function loadSettings() {
         document.querySelector("#user-directory-panel"),
         document.querySelector("#customer-portal-access-panel"),
         document.querySelector("#carrier-portal-access-panel"),
+        document.querySelector("#driver-app-access-panel"),
         document.querySelector("#company-tenant-panel"),
         document.querySelector("#company-billing-panel"),
         document.querySelector("#integration-foundation-panel"),
         document.querySelector("#user-activity-panel"),
       ],
-      ["Users", "Customer Portal", "Carrier Portal", "Company", "Billing Details", "Integrations", "Activity"],
+      ["Users", "Customer Portal", "Carrier Portal", "Driver App", "Company", "Billing Details", "Integrations", "Activity"],
       settingsActiveTab,
       (label) => { settingsActiveTab = label; }
     );
@@ -7555,6 +7714,12 @@ function customerOptions(customers, selectedId = "") {
     .join("");
 }
 
+const internalUserRoles = new Set(["owner", "admin", "dispatcher", "accounting", "safety"]);
+
+function isInternalStaffUser(user) {
+  return (user.access || []).some((access) => internalUserRoles.has(access.role));
+}
+
 function driverOptions(drivers = []) {
   return drivers
     .map((driver) => {
@@ -7570,7 +7735,7 @@ function driverOptions(drivers = []) {
     .join("");
 }
 
-function renderUserCreateForm(branches, drivers = []) {
+function renderUserCreateForm(branches) {
   return `
     <form id="create-user-form" class="record-form compact-form">
       <label>First name<input name="firstName" type="text" required autocomplete="off"></label>
@@ -7581,18 +7746,22 @@ function renderUserCreateForm(branches, drivers = []) {
       </label>
       <label class="password-field" hidden>Temporary password<input name="password" type="password" minlength="8" autocomplete="new-password"></label>
       <label>Role
-        <select name="role">${["admin", "dispatcher", "accounting", "safety", "driver", "owner"].map((role) => `<option value="${role}">${formatStatus(role)}</option>`).join("")}</select>
+        <select name="role">${["admin", "dispatcher", "accounting", "safety", "owner"].map((role) => `<option value="${role}">${formatStatus(role)}</option>`).join("")}</select>
       </label>
       <label class="branch-field">Branch<select name="branchId" required>${branchOptions(branches)}</select></label>
-      <label class="driver-profile-field" hidden>Driver profile
-        <select name="driverId" ${drivers.length ? "" : "disabled"}>
-          ${drivers.length ? '<option value="">Select driver profile</option>' + driverOptions(drivers) : '<option value="">No drivers available</option>'}
-        </select>
-      </label>
       <label>Status<select name="status"><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
       <div class="form-actions"><button type="submit">Add user</button><span class="form-message"></span></div>
     </form>
   `;
+}
+
+function renderSettingsFormDialog(id, title, description, formMarkup) {
+  return `<dialog id="${id}" class="crud-dialog settings-form-dialog">
+    <article class="panel">
+      <div class="panel-header"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button class="dialog-close" type="button" data-close-settings-dialog aria-label="Close">×</button></div>
+      ${formMarkup}
+    </article>
+  </dialog>`;
 }
 
 function renderCustomerPortalCreateForm(customers = []) {
@@ -7628,7 +7797,7 @@ function renderExistingPortalGrantForm(users = [], customers = []) {
 
 function renderPortalManagedAccess(user, access, customers = []) {
   return `
-    <article class="portal-access-row" data-user-id="${user.id}" data-access-id="${access.id}">
+    <article class="portal-access-row" data-user-id="${user.id}" data-access-id="${access.id}" data-email="${escapeAttribute(user.email || "")}">
       <div>
         <strong>${escapeHtml(user.email || "No email")}</strong>
         <span>${escapeHtml([user.first_name, user.last_name].filter(Boolean).join(" ") || "Portal user")}</span>
@@ -7639,7 +7808,12 @@ function renderPortalManagedAccess(user, access, customers = []) {
         <select name="status"><option value="active" ${access.status === "active" ? "selected" : ""}>Active</option><option value="inactive" ${access.status === "inactive" ? "selected" : ""}>Inactive</option></select>
         <button type="submit">Save portal access</button>
       </form>
-    </article>`;
+      <div class="portal-login-actions">
+        <button type="button" data-customer-portal-edit-user>Edit login</button>
+        <button type="button" data-customer-portal-reset-password>Send reset</button>
+      </div>
+    </article>
+    ${renderPortalLoginDialog(user, "Customer Portal Login", "Identity, email and temporary password for this customer portal user.", "customer-portal-identity-form")}`;
 }
 
 function carrierOptions(carriers = [], selectedId = "") {
@@ -7667,8 +7841,95 @@ function renderExistingCarrierPortalGrantForm(users = [], carriers = []) {
 }
 
 function renderCarrierPortalManagedAccess(user, access, carriers = []) {
-  return `<article class="portal-access-row carrier-access-row" data-user-id="${user.id}" data-access-id="${access.id}"><div class="portal-access-identity"><span class="portal-user-avatar">${escapeHtml((user.first_name?.[0] || user.email?.[0] || "C").toUpperCase())}</span><div><strong>${escapeHtml(user.email || "No email")}</strong><span>${escapeHtml([user.first_name,user.last_name].filter(Boolean).join(" ") || "Portal user")}</span><small>Created ${formatDateTime(access.created_at)}</small></div><span class="status-pill" data-state="${access.status === "active" ? "ok" : ""}">${formatStatus(access.status)}</span></div>
-    <form class="portal-access-form carrier-portal-access-form"><label><span>Carrier account</span><select name="carrierId" required>${carrierOptions(carriers, access.carrier_id)}</select></label><label><span>Access status</span><select name="status"><option value="active" ${access.status === "active" ? "selected" : ""}>Active</option><option value="inactive" ${access.status === "inactive" ? "selected" : ""}>Inactive</option></select></label><button type="submit">Save Access</button></form></article>`;
+  return `<article class="portal-access-row carrier-access-row" data-user-id="${user.id}" data-access-id="${access.id}" data-email="${escapeAttribute(user.email || "")}"><div class="portal-access-identity"><span class="portal-user-avatar">${escapeHtml((user.first_name?.[0] || user.email?.[0] || "C").toUpperCase())}</span><div><strong>${escapeHtml(user.email || "No email")}</strong><span>${escapeHtml([user.first_name,user.last_name].filter(Boolean).join(" ") || "Portal user")}</span><small>Created ${formatDateTime(access.created_at)}</small></div><span class="status-pill" data-state="${access.status === "active" ? "ok" : ""}">${formatStatus(access.status)}</span></div>
+    <form class="portal-access-form carrier-portal-access-form"><label><span>Carrier account</span><select name="carrierId" required>${carrierOptions(carriers, access.carrier_id)}</select></label><label><span>Access status</span><select name="status"><option value="active" ${access.status === "active" ? "selected" : ""}>Active</option><option value="inactive" ${access.status === "inactive" ? "selected" : ""}>Inactive</option></select></label><button type="submit">Save Access</button></form>
+    <div class="portal-login-actions"><button type="button" data-carrier-portal-edit-user>Edit login</button><button type="button" data-carrier-portal-reset-password>Send reset</button></div></article>
+    ${renderPortalLoginDialog(user, "Carrier Portal Login", "Identity, email and temporary password for this carrier portal user.", "carrier-portal-identity-form")}`;
+}
+
+function renderPortalLoginDialog(user, title, description, formClass) {
+  return `<dialog class="crud-dialog identity-dialog">
+    <article class="panel">
+      <div class="panel-header"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button class="dialog-close cancel-user-edit" type="button" aria-label="Close">×</button></div>
+      <form class="record-form identity-form ${formClass}" data-user-id="${user.id}">
+        <label><span>First name</span><input name="firstName" value="${escapeAttribute(user.first_name || "")}" required></label>
+        <label><span>Last name</span><input name="lastName" value="${escapeAttribute(user.last_name || "")}" required></label>
+        <label><span>Email</span><input name="email" type="email" value="${escapeAttribute(user.email || "")}" required></label>
+        <label><span>New temporary password</span><input name="password" type="password" minlength="8" placeholder="Leave blank to keep current"></label>
+        <p class="form-help">Use this when you want to set a new temporary password directly. Passwords are never stored in portal access records.</p>
+        <div class="form-actions"><button type="submit">Save login</button><button class="cancel-user-edit" type="button">Cancel</button></div>
+        <p class="form-message"></p>
+      </form>
+    </article>
+  </dialog>`;
+}
+
+function driverLinkedUser(driver, users = []) {
+  if (driver.auth_user_id) return users.find((user) => user.id === driver.auth_user_id) || null;
+  const driverEmail = String(driver.email || "").toLowerCase();
+  if (!driverEmail) return null;
+  return users.find((user) => String(user.email || "").toLowerCase() === driverEmail) || null;
+}
+
+function renderDriverAppAccessRow(driver, users = []) {
+  const user = driverLinkedUser(driver, users);
+  const hardLinked = Boolean(driver.auth_user_id);
+  const emailMatched = !hardLinked && Boolean(user);
+  const hasLogin = hardLinked || emailMatched;
+  const access = user?.access?.find((item) => item.role === "driver") || user?.access?.[0];
+  const { firstName, lastName } = driverNameParts(driver.name);
+  const stateLabel = hardLinked ? "Linked" : emailMatched ? "Email match" : "No login";
+  const stateHelp = hardLinked
+    ? escapeHtml(user?.email || "Auth user linked")
+    : emailMatched
+      ? "Login works by matching this driver's email. Use Edit login to maintain it."
+      : "Create credentials for Driver App access.";
+  return `
+    <article class="driver-app-access-row" data-driver-id="${driver.id}" data-user-id="${escapeAttribute(user?.id || "")}" data-email="${escapeAttribute(user?.email || driver.email || "")}">
+      <div class="driver-app-profile">
+        <span class="portal-user-avatar">${escapeHtml(userInitials(driver.name || driver.email || "D"))}</span>
+        <div>
+          <strong>${escapeHtml(driver.name || "Unnamed driver")}</strong>
+          <span>${escapeHtml(driver.branches?.name || "Branch not set")}</span>
+          <small>${escapeHtml(driver.email || "No driver email on profile")}</small>
+        </div>
+      </div>
+      <div class="driver-app-login-state">
+        <span class="status-pill" data-state="${hardLinked ? "ok" : emailMatched ? "warning" : ""}">${stateLabel}</span>
+        <small>${stateHelp}</small>
+        ${access ? `<small>${escapeHtml(formatStatus(access.role))} · ${escapeHtml(formatStatus(access.status))}</small>` : ""}
+      </div>
+      ${hasLogin ? `
+        <div class="driver-app-actions">
+          <button type="button" data-driver-edit-user ${user ? "" : "disabled"}>Edit login</button>
+          <button type="button" data-driver-reset-password ${user ? "" : "disabled"}>Send reset</button>
+        </div>
+        ${user ? `<dialog class="crud-dialog identity-dialog">
+          <article class="panel">
+            <div class="panel-header"><div><h2>Driver App Login</h2><p>Identity, email and temporary password for ${escapeHtml(driver.name || "driver")}.</p></div><button class="dialog-close cancel-user-edit" type="button" aria-label="Close">×</button></div>
+            <form class="record-form identity-form driver-identity-form" data-user-id="${user.id}">
+              <label><span>First name</span><input name="firstName" value="${escapeAttribute(user.first_name || firstName)}" required></label>
+              <label><span>Last name</span><input name="lastName" value="${escapeAttribute(user.last_name || lastName)}" required></label>
+              <label><span>Email</span><input name="email" type="email" value="${escapeAttribute(user.email || driver.email || "")}" required></label>
+              <label><span>New temporary password</span><input name="password" type="password" minlength="8" placeholder="Leave blank to keep current"></label>
+              <p class="form-help">Use this when you want to set a new temporary password directly. The password is not stored in the driver profile.</p>
+              <div class="form-actions"><button type="submit">Save login</button><button class="cancel-user-edit" type="button">Cancel</button></div>
+              <p class="form-message"></p>
+            </form>
+          </article>
+        </dialog>` : ""}
+      ` : `
+        <form class="driver-app-create-form">
+          <input name="driverId" type="hidden" value="${escapeAttribute(driver.id)}">
+          <input name="branchId" type="hidden" value="${escapeAttribute(driver.branch_id || "")}">
+          <input name="firstName" type="hidden" value="${escapeAttribute(firstName)}">
+          <input name="lastName" type="hidden" value="${escapeAttribute(lastName)}">
+          <label><span>Login email</span><input name="email" type="email" value="${escapeAttribute(driver.email || "")}" required autocomplete="off"></label>
+          <label><span>Temporary password</span><input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+          <button type="submit" ${driver.branch_id ? "" : "disabled"}>Create login</button>
+        </form>
+      `}
+    </article>`;
 }
 
 function renderManagedUser(user, branches, callerId) {
@@ -7714,36 +7975,22 @@ function renderManagedUser(user, branches, callerId) {
   `;
 }
 
-function bindUserManagement(branches = [], drivers = []) {
+function bindUserManagement() {
   const createForm = document.querySelector("#create-user-form");
+  const userPanel = document.querySelector("#user-directory-panel");
   const mode = createForm.querySelector('[name="mode"]');
   const role = createForm.querySelector('[name="role"]');
   const passwordField = createForm.querySelector(".password-field");
   const branchField = createForm.querySelector(".branch-field");
   const branchSelect = branchField.querySelector("select");
-  const driverProfileField = createForm.querySelector(".driver-profile-field");
-  const driverProfileSelect = driverProfileField.querySelector("select");
-  const createSubmit = createForm.querySelector('button[type="submit"]');
   const syncCreateFields = () => {
     passwordField.hidden = mode.value !== "create";
     passwordField.querySelector("input").required = mode.value === "create";
     branchField.hidden = role.value === "owner";
     branchSelect.required = role.value !== "owner";
-    driverProfileField.hidden = role.value !== "driver";
-    driverProfileSelect.required = role.value === "driver";
-    if (role.value !== "driver") driverProfileSelect.value = "";
-    createSubmit.disabled = role.value === "driver" && !drivers.some((driver) => !driver.auth_user_id);
-  };
-  const syncDriverBranch = () => {
-    const selectedDriver = drivers.find((driver) => driver.id === driverProfileSelect.value);
-    if (selectedDriver?.branch_id) branchSelect.value = selectedDriver.branch_id;
   };
   mode.addEventListener("change", syncCreateFields);
-  role.addEventListener("change", () => {
-    syncCreateFields();
-    syncDriverBranch();
-  });
-  driverProfileSelect.addEventListener("change", syncDriverBranch);
+  role.addEventListener("change", syncCreateFields);
   syncCreateFields();
 
   createForm.addEventListener("submit", async (event) => {
@@ -7760,7 +8007,7 @@ function bindUserManagement(branches = [], drivers = []) {
     }
   });
 
-  document.querySelectorAll(".access-form").forEach((form) => {
+  userPanel?.querySelectorAll(".access-form").forEach((form) => {
     const roleSelect = form.querySelector('[name="role"]');
     const branchSelect = form.querySelector('[name="branchId"]');
     const syncBranch = () => { branchSelect.disabled = roleSelect.value === "owner"; };
@@ -7790,7 +8037,7 @@ function bindUserManagement(branches = [], drivers = []) {
     });
   });
 
-  document.querySelectorAll(".reset-user-password").forEach((button) => button.addEventListener("click", async () => {
+  userPanel?.querySelectorAll(".reset-user-password").forEach((button) => button.addEventListener("click", async () => {
     const card = button.closest(".managed-user");
     try {
       await manageTmsUsers("resetPassword", { userId: card.dataset.userId, email: card.dataset.email });
@@ -7803,15 +8050,15 @@ function bindUserManagement(branches = [], drivers = []) {
     }
   }));
 
-  document.querySelectorAll(".edit-user").forEach((button) => button.addEventListener("click", () => {
+  userPanel?.querySelectorAll(".edit-user").forEach((button) => button.addEventListener("click", () => {
     button.closest(".managed-user").nextElementSibling.showModal();
   }));
 
-  document.querySelectorAll(".cancel-user-edit").forEach((button) => button.addEventListener("click", () => {
+  userPanel?.querySelectorAll(".cancel-user-edit").forEach((button) => button.addEventListener("click", () => {
     button.closest("dialog")?.close();
   }));
 
-  document.querySelectorAll(".identity-form").forEach((form) => form.addEventListener("submit", async (event) => {
+  userPanel?.querySelectorAll(".identity-form").forEach((form) => form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = form.querySelector('button[type="submit"]');
     const message = form.querySelector(".form-message");
@@ -7831,7 +8078,7 @@ function bindUserManagement(branches = [], drivers = []) {
     }
   }));
 
-  document.querySelectorAll(".delete-user").forEach((button) => button.addEventListener("click", async () => {
+  userPanel?.querySelectorAll(".delete-user").forEach((button) => button.addEventListener("click", async () => {
     const card = button.closest(".managed-user");
     if (!window.confirm(`Permanently delete ${card.dataset.email}?`)) return;
     try {
@@ -7846,7 +8093,87 @@ function bindUserManagement(branches = [], drivers = []) {
   }));
 }
 
+function bindDriverAppManagement() {
+  const panel = document.querySelector("#driver-app-access-panel");
+  if (!panel) return;
+  const message = panel.querySelector("#driver-app-management-message");
+
+  panel.querySelectorAll(".driver-app-create-form").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = form.querySelector('button[type="submit"]');
+      const values = Object.fromEntries(new FormData(form));
+      button.disabled = true;
+      message.dataset.state = "";
+      message.textContent = "Creating Driver App login...";
+      try {
+        await manageTmsUsers("create", { ...values, role: "driver", status: "active" });
+        settingsNotice = `Driver App login created for ${values.email}.`;
+        settingsActiveTab = "Driver App";
+        await loadSettings();
+      } catch (error) {
+        message.dataset.state = "error";
+        message.textContent = error.message;
+        button.disabled = false;
+      }
+    });
+  });
+
+  panel.querySelectorAll("[data-driver-edit-user]").forEach((button) => {
+    button.addEventListener("click", () => button.closest(".driver-app-access-row").querySelector("dialog")?.showModal());
+  });
+
+  panel.querySelectorAll(".driver-identity-form").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = form.querySelector('button[type="submit"]');
+      const formMessage = form.querySelector(".form-message");
+      button.disabled = true;
+      button.textContent = "Saving...";
+      formMessage.dataset.state = "";
+      formMessage.textContent = "";
+      try {
+        await manageTmsUsers("updateUser", { userId: form.dataset.userId, ...Object.fromEntries(new FormData(form)) });
+        settingsNotice = "Driver App login updated successfully.";
+        settingsActiveTab = "Driver App";
+        await loadSettings();
+      } catch (error) {
+        formMessage.dataset.state = "error";
+        formMessage.textContent = error.message;
+        button.disabled = false;
+        button.textContent = "Save login";
+      }
+    });
+  });
+
+  panel.querySelectorAll("[data-driver-reset-password]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const row = button.closest(".driver-app-access-row");
+      const email = row.dataset.email;
+      button.disabled = true;
+      message.dataset.state = "";
+      message.textContent = "Sending password reset...";
+      try {
+        await manageTmsUsers("resetPassword", { userId: row.dataset.userId, email });
+        message.textContent = `Password reset email sent to ${email}.`;
+      } catch (error) {
+        message.dataset.state = "error";
+        message.textContent = error.message;
+        button.disabled = false;
+      }
+    });
+  });
+
+  panel.querySelectorAll(".cancel-user-edit").forEach((button) => button.addEventListener("click", () => {
+    button.closest("dialog")?.close();
+  }));
+}
+
 function bindPortalManagement() {
+  const panel = document.querySelector("#customer-portal-access-panel");
+  panel?.querySelector("[data-open-customer-portal-create]")?.addEventListener("click", () => document.querySelector("#customer-portal-create-dialog")?.showModal());
+  panel?.querySelector("[data-open-customer-portal-grant]")?.addEventListener("click", () => document.querySelector("#customer-portal-grant-dialog")?.showModal());
+  panel?.querySelectorAll("[data-close-settings-dialog]").forEach((button) => button.addEventListener("click", () => button.closest("dialog")?.close()));
   const createForm = document.querySelector("#create-portal-user-form");
   if (createForm) {
     const mode = createForm.querySelector('[name="mode"]');
@@ -7893,7 +8220,7 @@ function bindPortalManagement() {
     }
   });
 
-  document.querySelectorAll(".portal-access-form").forEach((form) => {
+  panel?.querySelectorAll(".portal-access-form").forEach((form) => {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const row = form.closest(".portal-access-row");
@@ -7920,9 +8247,22 @@ function bindPortalManagement() {
       }
     });
   });
+
+  bindPortalLoginControls({
+    panelSelector: "#customer-portal-access-panel",
+    editSelector: "[data-customer-portal-edit-user]",
+    resetSelector: "[data-customer-portal-reset-password]",
+    formSelector: ".customer-portal-identity-form",
+    activeTab: "Customer Portal",
+    label: "Customer portal",
+  });
 }
 
 function bindCarrierPortalManagement() {
+  const panel = document.querySelector("#carrier-portal-access-panel");
+  panel?.querySelector("[data-open-carrier-portal-create]")?.addEventListener("click", () => document.querySelector("#carrier-portal-create-dialog")?.showModal());
+  panel?.querySelector("[data-open-carrier-portal-grant]")?.addEventListener("click", () => document.querySelector("#carrier-portal-grant-dialog")?.showModal());
+  panel?.querySelectorAll("[data-close-settings-dialog]").forEach((button) => button.addEventListener("click", () => button.closest("dialog")?.close()));
   const createForm = document.querySelector("#create-carrier-portal-user-form");
   if (createForm) {
     const mode = createForm.querySelector('[name="mode"]');
@@ -7942,10 +8282,69 @@ function bindCarrierPortalManagement() {
     try { await manageTmsUsers("addCarrierPortalAccess", values); settingsNotice = "Carrier portal access granted successfully."; settingsActiveTab = "Carrier Portal"; await loadSettings(); }
     catch (error) { message.dataset.state = "error"; message.textContent = error.message; }
   });
-  document.querySelectorAll(".carrier-portal-access-form").forEach((form) => form.addEventListener("submit", async (event) => {
+  document.querySelectorAll("#carrier-portal-access-panel .carrier-portal-access-form").forEach((form) => form.addEventListener("submit", async (event) => {
     event.preventDefault(); const row = form.closest(".portal-access-row"); const button = form.querySelector('button[type="submit"]'); button.disabled = true;
     try { await manageTmsUsers("updateCarrierPortalAccess", { accessId: row.dataset.accessId, userId: row.dataset.userId, ...Object.fromEntries(new FormData(form)) }); settingsNotice = "Carrier portal access updated successfully."; settingsActiveTab = "Carrier Portal"; await loadSettings(); }
     catch (error) { document.querySelector("#user-management-message").textContent = error.message; button.disabled = false; }
+  }));
+
+  bindPortalLoginControls({
+    panelSelector: "#carrier-portal-access-panel",
+    editSelector: "[data-carrier-portal-edit-user]",
+    resetSelector: "[data-carrier-portal-reset-password]",
+    formSelector: ".carrier-portal-identity-form",
+    activeTab: "Carrier Portal",
+    label: "Carrier portal",
+  });
+}
+
+function bindPortalLoginControls({ panelSelector, editSelector, resetSelector, formSelector, activeTab, label }) {
+  const panel = document.querySelector(panelSelector);
+  if (!panel) return;
+  const message = panel.querySelector(".portal-management-message");
+  panel.querySelectorAll(editSelector).forEach((button) => {
+    button.addEventListener("click", () => button.closest(".portal-access-row")?.nextElementSibling?.showModal());
+  });
+  panel.querySelectorAll(resetSelector).forEach((button) => {
+    button.addEventListener("click", async () => {
+      const row = button.closest(".portal-access-row");
+      button.disabled = true;
+      message.dataset.state = "";
+      message.textContent = "Sending password reset...";
+      try {
+        await manageTmsUsers("resetPassword", { userId: row.dataset.userId, email: row.dataset.email });
+        message.textContent = `Password reset email sent to ${row.dataset.email}.`;
+      } catch (error) {
+        message.dataset.state = "error";
+        message.textContent = error.message;
+        button.disabled = false;
+      }
+    });
+  });
+  panel.querySelectorAll(formSelector).forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = form.querySelector('button[type="submit"]');
+      const formMessage = form.querySelector(".form-message");
+      button.disabled = true;
+      button.textContent = "Saving...";
+      formMessage.dataset.state = "";
+      formMessage.textContent = "";
+      try {
+        await manageTmsUsers("updateUser", { userId: form.dataset.userId, ...Object.fromEntries(new FormData(form)) });
+        settingsNotice = `${label} login updated successfully.`;
+        settingsActiveTab = activeTab;
+        await loadSettings();
+      } catch (error) {
+        formMessage.dataset.state = "error";
+        formMessage.textContent = error.message;
+        button.disabled = false;
+        button.textContent = "Save login";
+      }
+    });
+  });
+  panel.querySelectorAll(".cancel-user-edit").forEach((button) => button.addEventListener("click", () => {
+    button.closest("dialog")?.close();
   }));
 }
 

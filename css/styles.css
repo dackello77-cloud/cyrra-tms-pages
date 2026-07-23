@@ -512,7 +512,8 @@ button:disabled {
   min-height: 54px;
   margin: 0 -32px;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  gap: 16px;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(8px);
@@ -522,7 +523,7 @@ button:disabled {
 .search-box {
   position: relative;
   display: grid;
-  width: min(420px, 45vw);
+  width: min(420px, 36vw);
   color: var(--muted);
   font-size: 0;
 }
@@ -611,8 +612,7 @@ button:disabled {
 
 .topbar-actions {
   display: flex;
-  position: absolute;
-  right: 28px;
+  margin-left: auto;
   gap: 8px;
   align-items: center;
 }
@@ -638,6 +638,45 @@ button:disabled {
   background: #ecfdf5;
   border-color: #86efac;
   color: #15803d;
+}
+
+.profile-badge {
+  display: grid;
+  min-width: 190px;
+  max-width: 280px;
+  gap: 1px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 6px 10px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+}
+
+.profile-badge-label {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.profile-badge strong,
+.profile-badge small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-badge strong {
+  font-size: 0.8rem;
+  line-height: 1.25;
+}
+
+.profile-badge small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.25;
 }
 
 .topbar-actions button {
@@ -830,6 +869,12 @@ h3 {
   justify-content: space-between;
   border-bottom: 1px solid var(--line);
   padding: 16px 18px;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .panel-header p,
@@ -1254,6 +1299,64 @@ h3 {
     minmax(120px, 0.8fr)
     minmax(120px, 0.8fr)
     150px;
+}
+
+.driver-row {
+  grid-template-columns:
+    minmax(150px, 1.1fr)
+    minmax(100px, 0.55fr)
+    minmax(110px, 0.65fr)
+    minmax(130px, 0.75fr)
+    minmax(150px, 0.8fr)
+    150px;
+}
+
+.driver-app-access {
+  display: grid;
+  gap: 2px;
+  align-content: center;
+}
+
+.driver-app-access strong {
+  width: fit-content;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.72rem;
+  padding: 3px 8px;
+}
+
+.driver-app-access[data-linked="true"] strong {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.driver-app-access small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.driver-credential-box {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 12px;
+}
+
+.driver-credential-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.driver-credential-fields[hidden] {
+  display: none;
 }
 
 .truck-row {
@@ -4810,6 +4913,31 @@ h3 {
   gap: 6px;
 }
 
+.portal-login-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.portal-login-actions button {
+  min-height: 36px;
+}
+
+.settings-access-directory {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 16px;
+}
+
+.settings-access-directory .portal-access-row {
+  grid-template-columns: minmax(220px, 1.2fr) minmax(440px, 2fr) auto;
+  gap: 16px;
+  align-items: center;
+  border-radius: 10px;
+  background: #fff;
+}
+
 .portal-access-identity {
   display: grid !important;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -4866,6 +4994,84 @@ h3 {
   background: #2563eb;
   color: #fff;
   font-weight: 700;
+}
+
+.driver-app-directory {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.driver-app-access-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(150px, 0.8fr) minmax(320px, 1.6fr);
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.driver-app-profile,
+.driver-app-login-state,
+.driver-app-actions {
+  display: grid;
+  gap: 5px;
+}
+
+.driver-app-profile {
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+}
+
+.driver-app-profile strong,
+.driver-app-profile span,
+.driver-app-profile small,
+.driver-app-login-state small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.driver-app-profile span,
+.driver-app-profile small,
+.driver-app-login-state small {
+  color: var(--muted);
+}
+
+.driver-app-create-form {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(150px, 0.9fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.driver-app-create-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.driver-app-create-form input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.driver-app-create-form button,
+.driver-app-actions button {
+  min-height: 36px;
+}
+
+.driver-app-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .public-tracking-content {
@@ -5231,6 +5437,16 @@ h3 {
     margin-left: auto;
   }
 
+  .profile-badge {
+    min-width: 170px;
+    max-width: 240px;
+  }
+
+  .driver-app-access-row,
+  .driver-app-create-form {
+    grid-template-columns: 1fr;
+  }
+
   .metric-grid,
   .quick-stats,
   .dispatch-board,
@@ -5296,6 +5512,11 @@ h3 {
     display: grid;
     width: 100%;
     grid-template-columns: 1fr;
+  }
+
+  .profile-badge {
+    width: 100%;
+    max-width: none;
   }
 
   .table-pagination {

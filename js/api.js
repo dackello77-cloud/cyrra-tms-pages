@@ -727,7 +727,7 @@ export async function updateCarrier(carrierId, carrier) {
 export async function listDrivers() {
   const { data, error } = await supabase
     .from("drivers")
-    .select("id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, status, created_at")
+    .select("id, branch_id, auth_user_id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, status, created_at, branches(name)")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -768,7 +768,7 @@ export async function createDriver(driver) {
   const { data, error } = await supabase
     .from("drivers")
     .insert(driver)
-    .select("id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, status, created_at")
+    .select("id, branch_id, auth_user_id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, status, created_at, branches(name)")
     .single();
 
   if (error) {
@@ -783,7 +783,7 @@ export async function updateDriver(driverId, driver) {
     .from("drivers")
     .update(driver)
     .eq("id", driverId)
-    .select("id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, status, created_at")
+    .select("id, branch_id, auth_user_id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, status, created_at, branches(name)")
     .single();
 
   if (error) {
