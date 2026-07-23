@@ -634,6 +634,7 @@ async function setAuthView(session) {
   const publicTrackingToken = publicTrackingTokenFromHash();
   if (publicTrackingToken) {
     authScreen.hidden = true;
+    appShell.dataset.accessReady = "true";
     appShell.hidden = false;
     currentAccess = [];
     currentPortalAccess = [];
@@ -645,6 +646,7 @@ async function setAuthView(session) {
   }
 
   authScreen.hidden = Boolean(session);
+  appShell.dataset.accessReady = "false";
   appShell.hidden = !session;
 
   if (session) {
@@ -669,6 +671,7 @@ async function setAuthView(session) {
       ...(currentCarrierPortalAccess.length ? ["carrier_portal"] : []),
     ])];
     applyRoleAwareShell();
+    appShell.dataset.accessReady = "true";
     refreshNotificationBadge();
     renderRoute();
   } else {
@@ -677,6 +680,7 @@ async function setAuthView(session) {
     currentCarrierPortalAccess = [];
     currentRoles = [];
     accessLoadError = "";
+    appShell.dataset.accessReady = "false";
   }
 }
 
@@ -816,6 +820,7 @@ function renderRoute() {
   const publicTrackingToken = publicTrackingTokenFromHash();
   if (publicTrackingToken) {
     authScreen.hidden = true;
+    appShell.dataset.accessReady = "true";
     appShell.hidden = false;
     renderPublicTracking(publicTrackingToken);
     return;
