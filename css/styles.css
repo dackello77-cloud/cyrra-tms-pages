@@ -625,6 +625,7 @@ button:disabled {
 }
 
 .environment-badge {
+  display: none;
   border: 1px solid rgba(71, 85, 105, 0.2);
   border-radius: 999px;
   color: #475569;
@@ -648,9 +649,11 @@ button:disabled {
 }
 
 .profile-badge {
+  order: 99;
   display: flex;
   min-width: 190px;
   max-width: 280px;
+  margin-left: auto;
   min-height: 48px;
   gap: 10px;
   align-items: center;
