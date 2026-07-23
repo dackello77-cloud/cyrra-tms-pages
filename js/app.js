@@ -599,8 +599,10 @@ document.addEventListener("keydown", (event) => {
   document.querySelectorAll(".column-chooser[open]").forEach((chooser) => chooser.removeAttribute("open"));
 });
 
-environmentBadge.textContent = appConfig.name;
-environmentBadge.dataset.environment = appConfig.name;
+if (environmentBadge) {
+  environmentBadge.textContent = appConfig.name;
+  environmentBadge.dataset.environment = appConfig.name;
+}
 signupButton.hidden = isProduction;
 signupButton.disabled = isProduction;
 
@@ -689,11 +691,13 @@ function applyRoleAwareShell() {
   addOrderButton.hidden = !can("manage_operations");
   const notificationButton = document.querySelector("#notification-button");
   notificationButton.hidden = !can("view_notifications");
-  const avatar = document.querySelector(".user-avatar");
   const roleLabel = currentRoles.length ? currentRoles.map(formatStatus).join(", ") : "No active role";
   updateProfileBadge();
-  avatar.title = roleLabel;
-  avatar.setAttribute("aria-label", roleLabel);
+  const avatar = document.querySelector(".user-avatar");
+  if (avatar) {
+    avatar.title = roleLabel;
+    avatar.setAttribute("aria-label", roleLabel);
+  }
 }
 
 function accessScopeLabel() {
@@ -730,9 +734,8 @@ function updateProfileBadge() {
   const avatar = document.querySelector(".user-avatar");
   if (!profileBadge || !avatar) return;
   if (!currentSession) {
-    profileBadge.innerHTML = '<span class="profile-badge-label">Signed out</span><strong>Not connected</strong><small>No active role</small>';
+    profileBadge.innerHTML = '<div class="profile-badge-copy"><strong>Not connected</strong><small>No active role</small></div><span class="user-avatar">MS</span>';
     profileBadge.title = "No active session";
-    avatar.textContent = "MS";
     return;
   }
   const name = userDisplayName();
@@ -740,12 +743,13 @@ function updateProfileBadge() {
   const scope = accessScopeLabel();
   const email = currentSession.user.email || "";
   profileBadge.innerHTML = `
-    <span class="profile-badge-label">${escapeHtml(appConfig.name)}</span>
-    <strong>${escapeHtml(name)}</strong>
-    <small>${escapeHtml(roles)} · ${escapeHtml(scope)}</small>
+    <div class="profile-badge-copy">
+      <strong>${escapeHtml(name)}</strong>
+      <small>${escapeHtml(roles)} · ${escapeHtml(scope)}</small>
+    </div>
+    <span class="user-avatar">${escapeHtml(userInitials(name))}</span>
   `;
   profileBadge.title = [email, roles, scope].filter(Boolean).join(" · ");
-  avatar.textContent = userInitials(name);
 }
 
 function renderAccessDenied(activeRoute) {

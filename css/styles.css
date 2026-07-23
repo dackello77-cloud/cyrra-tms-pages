@@ -641,24 +641,25 @@ button:disabled {
 }
 
 .profile-badge {
-  display: grid;
+  display: flex;
   min-width: 190px;
   max-width: 280px;
-  gap: 1px;
+  min-height: 48px;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
   border: 1px solid rgba(15, 23, 42, 0.1);
   border-radius: 8px;
   background: #fff;
   color: var(--ink);
-  padding: 6px 10px;
+  padding: 7px 8px 7px 10px;
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
 }
 
-.profile-badge-label {
-  color: var(--muted);
-  font-size: 0.62rem;
-  font-weight: 800;
-  line-height: 1.1;
-  text-transform: uppercase;
+.profile-badge-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
 }
 
 .profile-badge strong,
@@ -700,6 +701,7 @@ button:disabled {
 }
 
 .user-avatar {
+  flex: 0 0 auto;
   display: grid;
   width: 32px;
   height: 32px;
