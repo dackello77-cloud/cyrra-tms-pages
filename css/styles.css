@@ -5202,6 +5202,13 @@ h3 {
   font-weight: 700;
 }
 
+.tracking-privacy-options input[type="checkbox"] {
+  flex: 0 0 18px;
+  width: 18px;
+  min-height: 18px;
+  padding: 0;
+}
+
 .tracking-link-list header,
 .tracking-access-list header,
 .tracking-link-row,
