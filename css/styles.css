@@ -5188,6 +5188,12 @@ h3 {
   padding: 10px;
 }
 
+.tracking-expiry-controls {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.35fr) minmax(220px, 0.65fr);
+  gap: 12px;
+}
+
 .tracking-privacy-options legend {
   color: var(--muted);
   font-size: 0.82rem;
@@ -5510,6 +5516,7 @@ h3 {
   .notification-summary,
   .driver-card-grid,
   .public-tracking-grid,
+  .tracking-expiry-controls,
   .tracking-privacy-options {
     grid-template-columns: 1fr;
   }

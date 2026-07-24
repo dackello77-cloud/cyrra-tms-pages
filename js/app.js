@@ -9621,7 +9621,15 @@ async function renderLoadDetails(loadId, activeTab = "Overview") {
     document.querySelector("#carrier-tender-form")?.addEventListener("submit", handleCreateCarrierTender);
     document.querySelector("#carrier-bid-invite-form")?.addEventListener("submit", handleCarrierBidInvite);
     document.querySelectorAll("[data-select-carrier-bid]").forEach((button) => button.addEventListener("click", handleCarrierBidSelect));
-    document.querySelector("#public-tracking-form")?.addEventListener("submit", handleCreatePublicTrackingLink);
+    const publicTrackingForm = document.querySelector("#public-tracking-form");
+    publicTrackingForm?.elements.expires_preset?.addEventListener("change", () => {
+      const preset = publicTrackingForm.elements.expires_preset.value;
+      if (preset !== "custom") publicTrackingForm.elements.expires_at.value = trackingExpiryValueForDuration(preset);
+    });
+    publicTrackingForm?.elements.expires_at?.addEventListener("input", () => {
+      publicTrackingForm.elements.expires_preset.value = "custom";
+    });
+    publicTrackingForm?.addEventListener("submit", handleCreatePublicTrackingLink);
     document.querySelectorAll("[data-revoke-tracking-link]").forEach((button) => button.addEventListener("click", handleRevokePublicTrackingLink));
     document.querySelector("[data-ready-to-bill]")?.addEventListener("click", handleMarkReadyToBill);
     document.querySelector("[data-create-load-invoice]")?.addEventListener("click", handleCreateLoadInvoice);
@@ -9745,6 +9753,30 @@ function defaultTrackingExpiryValue() {
   return new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 16);
 }
 
+function trackingExpiryValueForDuration(duration) {
+  const hours = {
+    "12h": 12,
+    "24h": 24,
+    "3d": 72,
+    "7d": 168,
+    "14d": 336,
+    "30d": 720,
+  }[duration] || 168;
+  return new Date(Date.now() + hours * 3600000).toISOString().slice(0, 16);
+}
+
+function formatTimeUntil(value) {
+  const expires = Date.parse(value);
+  if (Number.isNaN(expires)) return "";
+  const remaining = expires - Date.now();
+  if (remaining <= 0) return "expired";
+  const minutes = Math.ceil(remaining / 60000);
+  if (minutes < 60) return `${minutes}m left`;
+  const hours = Math.ceil(minutes / 60);
+  if (hours < 48) return `${hours}h left`;
+  return `${Math.ceil(hours / 24)}d left`;
+}
+
 function publicTrackingUrl(actionUrl) {
   return `${window.location.origin}${window.location.pathname}${actionUrl}`;
 }
@@ -9762,7 +9794,18 @@ function renderPublicTrackingManager(load, links = [], logs = []) {
       <form id="public-tracking-form" class="record-form compact-form">
         <input name="load_id" type="hidden" value="${load.id}">
         <label><span>Label</span><input name="label" type="text" maxlength="120" placeholder="Customer ETA link"></label>
-        <label><span>Expires</span><input name="expires_at" type="datetime-local" value="${defaultTrackingExpiryValue()}" required></label>
+        <div class="tracking-expiry-controls">
+          <label><span>Active for</span><select name="expires_preset">
+            <option value="12h">12 hours</option>
+            <option value="24h">24 hours</option>
+            <option value="3d">3 days</option>
+            <option value="7d" selected>7 days</option>
+            <option value="14d">14 days</option>
+            <option value="30d">30 days</option>
+            <option value="custom">Custom</option>
+          </select></label>
+          <label><span>Expires</span><input name="expires_at" type="datetime-local" value="${defaultTrackingExpiryValue()}" required></label>
+        </div>
         <fieldset class="tracking-privacy-options">
           <legend>Public fields</legend>
           <label><input name="show_status" type="checkbox" checked>Status</label>
@@ -9792,6 +9835,7 @@ function renderPublicTrackingManager(load, links = [], logs = []) {
 
 function renderTrackingLinkRow(link) {
   const state = trackingLinkState(link);
+  const timeUntil = formatTimeUntil(link.expires_at);
   const visibleFields = [
     link.show_status ? "Status" : null,
     link.show_eta ? "ETA" : null,
@@ -9802,7 +9846,7 @@ function renderTrackingLinkRow(link) {
   return `<article class="tracking-link-row" data-state="${state}">
     <div>
       <strong>${escapeHtml(link.label || "Public tracking link")}</strong>
-      <small>${escapeHtml(visibleFields || "No fields")} · expires ${formatDateTime(link.expires_at)}</small>
+      <small>${escapeHtml(visibleFields || "No fields")} · expires ${formatDateTime(link.expires_at)}${timeUntil ? ` · ${escapeHtml(timeUntil)}` : ""}</small>
     </div>
     <span class="status-pill">${formatStatus(state)}</span>
     <button type="button" data-revoke-tracking-link="${link.id}" ${state === "active" ? "" : "disabled"}>Revoke</button>
