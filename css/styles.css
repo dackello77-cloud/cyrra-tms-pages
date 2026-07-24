@@ -438,6 +438,19 @@ button:disabled {
   grid-template-columns: 252px minmax(0, 1fr);
 }
 
+.app-shell[data-public-route="true"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell[data-public-route="true"] .sidebar,
+.app-shell[data-public-route="true"] .topbar {
+  display: none;
+}
+
+.app-shell[data-public-route="true"] .workspace {
+  padding-top: 28px;
+}
+
 .sidebar {
   border-right: 1px solid var(--line);
   background: var(--surface);

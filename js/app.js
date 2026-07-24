@@ -638,6 +638,10 @@ function publicTrackingTokenFromHash() {
   return decodeURIComponent(hash.slice("track/".length));
 }
 
+function setPublicShellMode(enabled) {
+  appShell.dataset.publicRoute = enabled ? "true" : "false";
+}
+
 async function setAuthView(session) {
   const requestId = ++authViewRequest;
   currentSession = session;
@@ -647,6 +651,7 @@ async function setAuthView(session) {
   if (publicTrackingToken) {
     authScreen.hidden = true;
     appShell.dataset.accessReady = "true";
+    setPublicShellMode(true);
     appShell.hidden = false;
     currentAccess = [];
     currentPortalAccess = [];
@@ -659,6 +664,7 @@ async function setAuthView(session) {
 
   authScreen.hidden = Boolean(session);
   appShell.dataset.accessReady = "false";
+  setPublicShellMode(false);
   appShell.hidden = !session;
 
   if (session) {
@@ -839,11 +845,13 @@ function renderRoute() {
   if (publicTrackingToken) {
     authScreen.hidden = true;
     appShell.dataset.accessReady = "true";
+    setPublicShellMode(true);
     appShell.hidden = false;
     renderPublicTracking(publicTrackingToken);
     return;
   }
 
+  setPublicShellMode(false);
   if (!currentSession) {
     return;
   }
