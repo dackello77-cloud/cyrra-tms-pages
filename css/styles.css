@@ -463,9 +463,61 @@ button:disabled {
   margin-bottom: 18px;
 }
 
+.mobile-nav-toggle {
+  display: none;
+  width: 42px;
+  min-height: 42px;
+  margin-left: auto;
+  place-content: center;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.mobile-nav-toggle > span:not(.sr-only) {
+  display: block;
+  width: 20px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .nav-list {
   display: grid;
   gap: 3px;
+}
+
+.nav-group > summary {
+  list-style: none;
+}
+
+.nav-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.nav-group > summary {
+  margin: 18px 0 5px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.nav-group-links {
+  display: grid;
+  gap: 3px;
+}
+
+.mobile-nav-actions {
+  display: none;
 }
 
 .app-shell[data-access-ready="false"] .nav-section,
@@ -522,6 +574,21 @@ button:disabled {
   align-content: start;
   gap: 20px;
   padding: 0 32px 34px;
+}
+
+.startup-loading {
+  position: fixed;
+  z-index: 2;
+  inset: 54px 0 0 252px;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+#page-root.dashboard-loading > :not(.startup-loading) {
+  visibility: hidden;
 }
 
 .topbar {
@@ -3482,9 +3549,11 @@ h3 {
   background: var(--surface-soft);
 }
 
-.mapbox-map {
+.mapbox-shell > .mapbox-map {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .mapbox-message {
@@ -5461,12 +5530,17 @@ h3 {
 
 @media (max-width: 900px) {
   .app-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .sidebar {
+    position: sticky;
+    z-index: 30;
+    top: 0;
+    min-width: 0;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
   }
 
   .nav-list {
@@ -5478,6 +5552,7 @@ h3 {
   }
 
   .workspace {
+    min-width: 0;
     padding: 0 18px 28px;
   }
 
@@ -5544,6 +5619,335 @@ h3 {
 }
 
 @media (max-width: 640px) {
+  html,
+  body {
+    width: 100%;
+    max-width: 100vw;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .app-shell {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  .workspace {
+    display: block;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: hidden;
+    padding: 76px 8px 24px;
+  }
+
+  .startup-loading {
+    inset: 68px 0 0;
+  }
+
+  #page-root,
+  .content-grid,
+  .load-grid {
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .content-grid > *,
+  .load-grid > * {
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .nav-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: fixed;
+    z-index: 50;
+    inset: 0 0 auto;
+    width: auto;
+    max-width: 100%;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 10px 12px;
+  }
+
+  .sidebar > .brand {
+    min-height: 48px;
+    margin-bottom: 0;
+  }
+
+  .mobile-nav-toggle {
+    display: grid;
+  }
+
+  .nav-list {
+    display: none;
+    padding: 6px 0 10px;
+  }
+
+  .sidebar[data-nav-open] .nav-list {
+    display: grid;
+    max-height: calc(100vh - 68px);
+    overflow-y: auto;
+    background: var(--surface);
+  }
+
+  .nav-group {
+    border-top: 1px solid var(--line);
+  }
+
+  .nav-group > summary {
+    display: flex;
+    min-height: 44px;
+    margin: 0;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    padding: 0 10px;
+  }
+
+  .nav-group > summary::after {
+    content: "+";
+    color: var(--muted);
+    font-size: 18px;
+  }
+
+  .nav-group[open] > summary::after {
+    content: "−";
+  }
+
+  .nav-group-links {
+    padding: 0 0 8px;
+  }
+
+  .mobile-nav-actions {
+    display: grid;
+    gap: 8px;
+    border-top: 1px solid var(--line);
+    padding: 12px 0 4px;
+  }
+
+  .mobile-nav-actions button {
+    width: 100%;
+  }
+
+  .mobile-nav-actions .profile-badge {
+    display: flex;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+  }
+
+  .topbar {
+    display: none;
+  }
+
+  #page-root,
+  .panel,
+  .settings-root,
+  .settings-grid,
+  .user-directory,
+  .managed-user {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .page-tabs {
+    display: grid;
+    width: 100%;
+    max-width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    overflow: hidden;
+  }
+
+  .page-tabs button {
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    white-space: normal;
+    line-height: 1.2;
+    padding: 6px 8px;
+  }
+
+  .access-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .managed-user-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-access-directory .portal-access-row,
+  .portal-access-identity,
+  .portal-access-form,
+  .driver-app-access-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .portal-access-identity {
+    justify-items: start;
+  }
+
+  .portal-access-identity .status-pill {
+    justify-self: start;
+  }
+
+  .portal-login-actions,
+  .driver-app-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .portal-access-row,
+  .driver-app-access-row,
+  .managed-user {
+    overflow: hidden;
+  }
+
+  #loads-table .load-row.data-row-head {
+    display: none;
+  }
+
+  #loads-table {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    gap: 10px;
+    overflow: hidden;
+    border: 0;
+    background: transparent;
+    padding: 8px;
+  }
+
+  #loads-table .load-row:not(.data-row-head) {
+    display: grid;
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100%;
+    grid-template-areas:
+      "select number"
+      ". status"
+      ". customer"
+      ". route"
+      ". pickup"
+      ". actions";
+    grid-template-columns: auto minmax(0, 1fr) !important;
+    gap: 10px 12px;
+    align-items: start;
+    border: 1px solid var(--line);
+    border-left: 3px solid #93b4ff;
+    border-radius: 10px;
+    background: #fff;
+    padding: 14px;
+  }
+
+  #loads-table .load-row {
+    min-width: 0 !important;
+  }
+
+  #loads-table .load-row > input {
+    grid-area: select;
+    margin-top: 4px;
+  }
+
+  #loads-table .load-number-cell {
+    grid-area: number;
+  }
+
+  #loads-table .load-status-stack {
+    grid-area: status;
+    justify-items: start;
+  }
+
+  #loads-table .load-customer-cell {
+    grid-area: customer;
+  }
+
+  #loads-table .load-route-cell {
+    grid-area: route;
+  }
+
+  #loads-table .load-pickup-cell {
+    grid-area: pickup;
+  }
+
+  #loads-table .row-actions {
+    display: flex;
+    grid-area: actions;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  #loads-table .row-actions button {
+    display: inline-flex;
+    width: 100% !important;
+    min-width: 0;
+    max-width: 100%;
+    flex: 0 0 auto;
+    min-height: 38px;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink) !important;
+    font-size: 13px !important;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+    text-indent: 0;
+    visibility: visible;
+    opacity: 1;
+  }
+
+  #loads-table .row-actions .load-open-action {
+    color: #1d4ed8 !important;
+  }
+
+  #loads-table .load-customer-cell,
+  #loads-table .load-route-cell,
+  #loads-table .load-pickup-cell,
+  #loads-table .load-route-cell small {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  #loads-table .load-customer-cell::before,
+  #loads-table .load-route-cell::before,
+  #loads-table .load-pickup-cell::before {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--faint);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+
+  #loads-table .load-customer-cell::before {
+    content: "Customer";
+  }
+
+  #loads-table .load-route-cell::before {
+    content: "Carrier / Route";
+  }
+
+  #loads-table .load-pickup-cell::before {
+    content: "Pickup";
+  }
+
   .topbar,
   .page-header,
   .panel-header {

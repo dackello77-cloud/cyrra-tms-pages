@@ -4,8 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cyrra TMS</title>
-    <link href="https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.css" rel="stylesheet" />
-    <link rel="stylesheet" href="css/styles.css?v=20260724-2" />
+    <link rel="stylesheet" href="css/styles.css?v=20260725-20" />
   </head>
   <body>
     <section id="auth-screen" class="auth-screen" hidden>
@@ -41,31 +40,53 @@
             <strong>Cyrra TMS</strong>
             <small>Transport suite</small>
           </div>
+          <button id="mobile-nav-toggle" class="mobile-nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">
+            <span></span><span></span><span></span>
+            <span class="sr-only">Toggle navigation</span>
+          </button>
         </div>
 
-        <nav class="nav-list">
-          <span class="nav-section">Home</span>
-          <a class="active" href="#dashboard" data-route="dashboard">Dashboard</a>
-          <a href="#loads" data-route="loads">Orders / Loads</a>
-          <a href="#quotes" data-route="quotes">Quotes / Rates</a>
-          <a href="#dispatch" data-route="dispatch">Dispatch Board</a>
-          <a href="#tracking" data-route="tracking">Fleet Map</a>
-          <a href="#driver" data-route="driver">Driver App</a>
-          <a href="#customer_portal" data-route="customer_portal">Customer Portal</a>
-          <a href="#carrier_portal" data-route="carrier_portal">Carrier Portal</a>
-          <span class="nav-section">Operations</span>
-          <a href="#drivers" data-route="drivers">Drivers</a>
-          <a href="#equipment" data-route="equipment">Equipment</a>
-          <a href="#maintenance" data-route="maintenance">Maintenance</a>
-          <a href="#customers" data-route="customers">Customers</a>
-          <a href="#carriers" data-route="carriers">Carriers</a>
-          <span class="nav-section">Back office</span>
-          <a href="#documents" data-route="documents">Documents</a>
-          <a href="#billing" data-route="billing">Billing</a>
-          <a href="#settlements" data-route="settlements">Settlements</a>
-          <a href="#notifications" data-route="notifications">Notifications <span id="nav-notification-count" class="nav-count" hidden>0</span></a>
-          <a href="#reports" data-route="reports">Reports</a>
-          <a href="#settings" data-route="settings">Settings</a>
+        <nav id="main-nav" class="nav-list">
+          <details class="nav-group" open>
+            <summary>Home</summary>
+            <div class="nav-group-links">
+              <a class="active" href="#dashboard" data-route="dashboard">Dashboard</a>
+              <a href="#loads" data-route="loads">Orders / Loads</a>
+              <a href="#quotes" data-route="quotes">Quotes / Rates</a>
+              <a href="#dispatch" data-route="dispatch">Dispatch Board</a>
+              <a href="#tracking" data-route="tracking">Fleet Map</a>
+              <a href="#driver" data-route="driver">Driver App</a>
+              <a href="#customer_portal" data-route="customer_portal">Customer Portal</a>
+              <a href="#carrier_portal" data-route="carrier_portal">Carrier Portal</a>
+            </div>
+          </details>
+          <details class="nav-group" open>
+            <summary>Operations</summary>
+            <div class="nav-group-links">
+              <a href="#drivers" data-route="drivers">Drivers</a>
+              <a href="#equipment" data-route="equipment">Equipment</a>
+              <a href="#maintenance" data-route="maintenance">Maintenance</a>
+              <a href="#customers" data-route="customers">Customers</a>
+              <a href="#carriers" data-route="carriers">Carriers</a>
+            </div>
+          </details>
+          <details class="nav-group" open>
+            <summary>Back office</summary>
+            <div class="nav-group-links">
+              <a href="#documents" data-route="documents">Documents</a>
+              <a href="#billing" data-route="billing">Billing</a>
+              <a href="#settlements" data-route="settlements">Settlements</a>
+              <a href="#notifications" data-route="notifications">Notifications <span id="nav-notification-count" class="nav-count" hidden>0</span></a>
+              <a href="#reports" data-route="reports">Reports</a>
+              <a href="#settings" data-route="settings">Settings</a>
+            </div>
+          </details>
+          <div class="mobile-nav-actions">
+            <button id="mobile-refresh-data" type="button">Refresh</button>
+            <button id="mobile-add-order" type="button">Add Order</button>
+            <button id="mobile-logout" type="button">Logout</button>
+            <div id="mobile-profile-badge" class="profile-badge" aria-live="polite"></div>
+          </div>
         </nav>
       </aside>
 
@@ -96,8 +117,6 @@
       </main>
     </div>
 
-    <script src="https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.js"></script>
-    <script src="vendor/fflate/fflate.js"></script>
-    <script type="module" src="js/app.js?v=20260724-2"></script>
+    <script type="module" src="js/app.js?v=20260725-20"></script>
   </body>
 </html>

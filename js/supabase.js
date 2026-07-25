@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "../vendor/supabase/supabase.js";
 import { appConfig } from "./config.js";
 
 export const supabase = createClient(

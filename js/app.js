@@ -233,6 +233,12 @@ const logoutButton = document.querySelector("#logout-button");
 const addOrderButton = document.querySelector("#add-order-button");
 const pageRoot = document.querySelector("#page-root");
 const navLinks = Array.from(document.querySelectorAll(".nav-list a"));
+const mobileNavToggle = document.querySelector("#mobile-nav-toggle");
+const navGroups = Array.from(document.querySelectorAll(".nav-group"));
+const mobileRefreshButton = document.querySelector("#mobile-refresh-data");
+const mobileAddOrderButton = document.querySelector("#mobile-add-order");
+const mobileLogoutButton = document.querySelector("#mobile-logout");
+const mobileProfileBadge = document.querySelector("#mobile-profile-badge");
 const refreshButton = document.querySelector("#refresh-data");
 const environmentBadge = document.querySelector("#environment-badge");
 const profileBadge = document.querySelector("#profile-badge");
@@ -250,6 +256,9 @@ let accessLoadError = "";
 let authViewRequest = 0;
 let fleetMapInstance = null;
 let publicTrackingMapInstance = null;
+let mapboxLoadPromise = null;
+let fflateLoadPromise = null;
+let fleetMapObserver = null;
 let fleetTelemetryData = { positions: [], hos: [], unavailableMessage: "" };
 let fleetNotice = "";
 let settingsNotice = "";
@@ -668,7 +677,7 @@ async function setAuthView(session) {
   appShell.hidden = !session;
 
   if (session) {
-    pageRoot.innerHTML = '<div class="empty-state">Loading user access...</div>';
+    pageRoot.innerHTML = '<div class="startup-loading" role="status">Loading your workspace...</div>';
     try {
       [currentAccess, currentPortalAccess, currentCarrierPortalAccess] = await Promise.all([
         getCurrentTmsAccess(session.user.id),
@@ -711,6 +720,7 @@ function applyRoleAwareShell() {
     link.hidden = !can(`view_${link.dataset.route}`);
   });
   addOrderButton.hidden = !can("manage_operations");
+  if (mobileAddOrderButton) mobileAddOrderButton.hidden = !can("manage_operations");
   const notificationButton = document.querySelector("#notification-button");
   notificationButton.hidden = !can("view_notifications");
   const roleLabel = currentRoles.length ? currentRoles.map(formatStatus).join(", ") : "No active role";
@@ -753,10 +763,10 @@ function userInitials(name) {
 }
 
 function updateProfileBadge() {
-  const avatar = document.querySelector(".user-avatar");
-  if (!profileBadge || !avatar) return;
+  if (!profileBadge) return;
   if (!currentSession) {
     profileBadge.innerHTML = '<div class="profile-badge-copy"><strong>Not connected</strong><small>No active role</small></div><span class="user-avatar">MS</span>';
+    if (mobileProfileBadge) mobileProfileBadge.innerHTML = profileBadge.innerHTML;
     profileBadge.title = "No active session";
     return;
   }
@@ -771,6 +781,10 @@ function updateProfileBadge() {
     </div>
     <span class="user-avatar">${escapeHtml(userInitials(name))}</span>
   `;
+  if (mobileProfileBadge) {
+    mobileProfileBadge.innerHTML = profileBadge.innerHTML;
+    mobileProfileBadge.title = [email, roles, scope].filter(Boolean).join(" · ");
+  }
   profileBadge.title = [email, roles, scope].filter(Boolean).join(" · ");
 }
 
@@ -838,9 +852,49 @@ function updateActiveNav(activeRoute) {
   navLinks.forEach((link) => {
     link.classList.toggle("active", link.dataset.route === activeRoute);
   });
+  if (window.matchMedia("(max-width: 640px)").matches) {
+    navLinks.find((link) => link.dataset.route === activeRoute)?.closest(".nav-group")?.setAttribute("open", "");
+  }
+}
+
+function setMobileNavOpen(open) {
+  document.querySelector(".sidebar")?.toggleAttribute("data-nav-open", open);
+  mobileNavToggle?.setAttribute("aria-expanded", String(open));
+}
+
+function resetMobileHorizontalScroll() {
+  if (!window.matchMedia("(max-width: 640px)").matches) return;
+  requestAnimationFrame(() => {
+    window.scrollTo({ left: 0, top: window.scrollY });
+    document.documentElement.scrollLeft = 0;
+    document.body.scrollLeft = 0;
+  });
+}
+
+mobileNavToggle?.addEventListener("click", () => {
+  setMobileNavOpen(mobileNavToggle.getAttribute("aria-expanded") !== "true");
+  resetMobileHorizontalScroll();
+});
+mobileRefreshButton?.addEventListener("click", () => refreshButton.click());
+mobileAddOrderButton?.addEventListener("click", () => addOrderButton.click());
+mobileLogoutButton?.addEventListener("click", () => logoutButton.click());
+
+navLinks.forEach((link) => link.addEventListener("click", () => {
+  if (window.matchMedia("(max-width: 640px)").matches) {
+    setMobileNavOpen(false);
+    resetMobileHorizontalScroll();
+  }
+}));
+
+window.addEventListener("resize", resetMobileHorizontalScroll);
+
+if (window.matchMedia("(max-width: 640px)").matches) {
+  navGroups.forEach((group) => group.removeAttribute("open"));
 }
 
 function renderRoute() {
+  resetMobileHorizontalScroll();
+  pageRoot.classList.remove("dashboard-loading");
   const publicTrackingToken = publicTrackingTokenFromHash();
   if (publicTrackingToken) {
     authScreen.hidden = true;
@@ -969,6 +1023,76 @@ function renderPageHeader({ eyebrow, title, status }) {
   `;
 }
 
+function ensureMapboxLoaded() {
+  if (mapboxLoadPromise) return mapboxLoadPromise;
+
+  const stylesheetPromise = new Promise((resolve, reject) => {
+    let stylesheet = document.querySelector('link[data-mapbox-styles]');
+    let appendStylesheet = false;
+    if (stylesheet?.sheet) {
+      resolve();
+      return;
+    }
+    if (!stylesheet) {
+      stylesheet = document.createElement("link");
+      stylesheet.rel = "stylesheet";
+      stylesheet.href = "https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.css";
+      stylesheet.dataset.mapboxStyles = "true";
+      appendStylesheet = true;
+    }
+    stylesheet.addEventListener("load", resolve, { once: true });
+    stylesheet.addEventListener("error", () => reject(new Error("Mapbox CSS could not load.")), { once: true });
+    if (appendStylesheet) document.head.append(stylesheet);
+  });
+
+  const scriptPromise = new Promise((resolve, reject) => {
+    if (window.mapboxgl) {
+      resolve(window.mapboxgl);
+      return;
+    }
+    let script = document.querySelector('script[data-mapbox-script]');
+    let appendScript = false;
+    if (!script) {
+      script = document.createElement("script");
+      script.src = "https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.js";
+      script.async = true;
+      script.dataset.mapboxScript = "true";
+      appendScript = true;
+    }
+    script.addEventListener("load", () => resolve(window.mapboxgl), { once: true });
+    script.addEventListener("error", () => reject(new Error("Mapbox CDN could not load.")), { once: true });
+    if (appendScript) document.head.append(script);
+  });
+
+  mapboxLoadPromise = Promise.all([stylesheetPromise, scriptPromise]).then(([, mapbox]) => mapbox).catch((error) => {
+    mapboxLoadPromise = null;
+    throw error;
+  });
+
+  return mapboxLoadPromise;
+}
+
+function ensureFflateLoaded() {
+  if (window.fflate) return Promise.resolve(window.fflate);
+  if (fflateLoadPromise) return fflateLoadPromise;
+
+  fflateLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "vendor/fflate/fflate.js";
+    script.async = true;
+    script.dataset.fflateScript = "true";
+    script.addEventListener("load", () => resolve(window.fflate), { once: true });
+    script.addEventListener("error", () => reject(new Error("XLSX compression library could not load.")), { once: true });
+    document.head.append(script);
+  }).catch((error) => {
+    fflateLoadPromise = null;
+    document.querySelector('script[data-fflate-script]')?.remove();
+    throw error;
+  });
+
+  return fflateLoadPromise;
+}
+
 async function renderPublicTracking(token) {
   updateActiveNav("__public_tracking");
   pageRoot.innerHTML = `
@@ -991,7 +1115,7 @@ async function renderPublicTracking(token) {
     const snapshot = await getPublicTrackingSnapshot(token);
     document.querySelector("#connection-status").textContent = "Live";
     content.innerHTML = renderPublicTrackingSnapshot(snapshot);
-    initPublicTrackingMap(snapshot);
+    await initPublicTrackingMap(snapshot);
   } catch (error) {
     document.querySelector("#connection-status").textContent = "Unavailable";
     content.innerHTML = `<div class="empty-state">Tracking link is unavailable: ${escapeHtml(error.message)}</div>`;
@@ -1025,13 +1149,15 @@ function renderPublicTrackingSnapshot(snapshot) {
   `;
 }
 
-function initPublicTrackingMap(snapshot) {
+async function initPublicTrackingMap(snapshot) {
   publicTrackingMapInstance?.remove();
   publicTrackingMapInstance = null;
   const location = snapshot?.location;
   const mapEl = document.querySelector("#public-tracking-map");
   if (!mapEl || !location?.latitude || !location?.longitude) return;
-  if (!window.mapboxgl) {
+  try {
+    await ensureMapboxLoaded();
+  } catch {
     mapEl.innerHTML = '<div class="mapbox-message">Map is unavailable.</div>';
     return;
   }
@@ -1314,7 +1440,9 @@ function renderCustomerPortalInvoice(invoice) {
 }
 
 function renderDashboard() {
+  pageRoot.classList.add("dashboard-loading");
   pageRoot.innerHTML = `
+    <div class="startup-loading" role="status">Loading Dashboard...</div>
     ${renderPageHeader({ eyebrow: "M&M Safety operations", title: "Cyrra TMS Dashboard", status: "Checking Supabase" })}
     <section class="phoenix-layout">
       <div class="main-column">
@@ -1383,7 +1511,7 @@ function renderDashboard() {
             <h2>Action Queue</h2>
             <p>Items that need operational follow-up</p>
           </div>
-          <button id="check-tables" type="button">Refresh</button>
+          <button id="check-tables" type="button">Run health check</button>
         </div>
         <div id="dashboard-alerts" class="action-list">
           <div class="empty-state">Loading action queue...</div>
@@ -1401,12 +1529,12 @@ function renderDashboard() {
           <article>
             <span>TMS schema</span>
             <strong id="schema-count">0%</strong>
-            <div id="tms-table-status" class="compact-status"></div>
+            <div id="tms-table-status" class="compact-status"><div class="empty-state">Run the health check when schema diagnostics are needed.</div></div>
           </article>
           <article>
             <span>Supabase setup</span>
             <strong id="setup-count">0%</strong>
-            <div id="table-status" class="compact-status"></div>
+            <div id="table-status" class="compact-status"><div class="empty-state">Health checks are deferred to keep Dashboard startup fast.</div></div>
           </article>
         </div>
       </article>
@@ -1430,11 +1558,11 @@ function renderDashboard() {
     </section>
   `;
 
-  document.querySelector("#check-tables").addEventListener("click", loadDashboardData);
+  document.querySelector("#check-tables").addEventListener("click", () => loadDashboardData({ includeHealth: true }));
   loadDashboardData();
 }
 
-async function loadDashboardData() {
+async function loadDashboardData({ includeHealth = false } = {}) {
   const statusEl = document.querySelector("#connection-status");
   const tableStatusEl = document.querySelector("#table-status");
   const tmsTableStatusEl = document.querySelector("#tms-table-status");
@@ -1443,16 +1571,17 @@ async function loadDashboardData() {
   const recentEl = document.querySelector("#dashboard-recent");
 
   statusEl.textContent = "Checking Supabase";
-  tableStatusEl.innerHTML = '<div class="empty-state">Checking database tables...</div>';
-  tmsTableStatusEl.innerHTML = '<div class="empty-state">Checking TMS schema...</div>';
+  if (includeHealth) {
+    tableStatusEl.innerHTML = '<div class="empty-state">Checking database tables...</div>';
+    tmsTableStatusEl.innerHTML = '<div class="empty-state">Checking TMS schema...</div>';
+  }
   statusBarsEl.innerHTML = '<div class="empty-state">Loading load status...</div>';
   alertsEl.innerHTML = '<div class="empty-state">Loading action queue...</div>';
   recentEl.innerHTML = '<div class="empty-state">Loading recent activity...</div>';
 
   try {
-    const [results, tmsResults, drivers, trucks, trailers, carriers, loads, documents, invoices] = await Promise.all([
-      checkExistingTables(),
-      checkTmsTables(),
+    const [health, drivers, trucks, trailers, carriers, loads, documents, invoices] = await Promise.all([
+      includeHealth ? Promise.all([checkExistingTables(), checkTmsTables()]) : Promise.resolve(null),
       safeDashboardList(listDrivers),
       safeDashboardList(listTrucks),
       safeDashboardList(listTrailers),
@@ -1461,10 +1590,7 @@ async function loadDashboardData() {
       safeDashboardList(listDocuments),
       safeDashboardList(listInvoices),
     ]);
-    const hasConnection = results.some((result) => result.ok);
-    const tmsReady = tmsResults.every((result) => result.ok);
-    const setupPercent = Math.round((results.filter((result) => result.ok).length / results.length) * 100);
-    const tmsPercent = Math.round((tmsResults.filter((result) => result.ok).length / tmsResults.length) * 100);
+    const [results, tmsResults] = health || [null, null];
     const activeLoads = loads.filter((load) => !["delivered", "cancelled"].includes(operationalLoadStatus(load)));
     const unassignedLoads = loads.filter((load) => !load.driver_id || !load.truck_id || !load.trailer_id);
     const today = localDateIso();
@@ -1483,10 +1609,17 @@ async function loadDashboardData() {
     const dueSoonCompliance = compliance.filter((item) => item.state === "due_soon");
     const missingCompliance = compliance.filter((item) => item.state === "missing");
 
-    tableStatusEl.innerHTML = renderRows(results);
-    tmsTableStatusEl.innerHTML = renderRows(tmsResults);
-    document.querySelector("#setup-count").textContent = `${setupPercent}%`;
-    document.querySelector("#schema-count").textContent = `${tmsPercent}%`;
+    if (health) {
+      const setupPercent = Math.round((results.filter((result) => result.ok).length / results.length) * 100);
+      const tmsPercent = Math.round((tmsResults.filter((result) => result.ok).length / tmsResults.length) * 100);
+      tableStatusEl.innerHTML = renderRows(results);
+      tmsTableStatusEl.innerHTML = renderRows(tmsResults);
+      document.querySelector("#setup-count").textContent = `${setupPercent}%`;
+      document.querySelector("#schema-count").textContent = `${tmsPercent}%`;
+    } else {
+      document.querySelector("#setup-count").textContent = "On demand";
+      document.querySelector("#schema-count").textContent = "On demand";
+    }
     document.querySelector("#dash-active-loads").textContent = `${activeLoads.length} active loads`;
     document.querySelector("#dash-unassigned").textContent = `${unassignedLoads.length} unassigned`;
     document.querySelector("#dash-docs-review").textContent = `${docIssues.length} document issues`;
@@ -1523,8 +1656,11 @@ async function loadDashboardData() {
       .join("");
     alertsEl.innerHTML = renderDashboardAlerts({ unassignedLoads, todayLoads, readyToBill, docIssues, overdueInvoices, expiredCompliance, dueSoonCompliance, missingCompliance });
     recentEl.innerHTML = renderDashboardRecent({ loads, documents, invoices });
+    const hasConnection = health ? results.some((result) => result.ok) : true;
+    const tmsReady = health ? tmsResults.every((result) => result.ok) : true;
     statusEl.dataset.state = hasConnection ? "ok" : "error";
     statusEl.textContent = tmsReady ? "Live TMS data" : hasConnection ? "Supabase connected" : "No readable tables";
+    revealDashboard();
   } catch (error) {
     tableStatusEl.innerHTML = `<div class="empty-state">Supabase check failed: ${escapeHtml(error.message)}</div>`;
     tmsTableStatusEl.innerHTML = '<div class="empty-state">TMS schema check skipped.</div>';
@@ -1533,7 +1669,15 @@ async function loadDashboardData() {
     recentEl.innerHTML = '<div class="empty-state">Recent activity unavailable.</div>';
     statusEl.dataset.state = "error";
     statusEl.textContent = "Connection failed";
+    revealDashboard();
   }
+}
+
+function revealDashboard() {
+  requestAnimationFrame(() => {
+    pageRoot.classList.remove("dashboard-loading");
+    pageRoot.querySelector(".startup-loading")?.remove();
+  });
 }
 
 async function safeDashboardList(loader) {
@@ -3587,7 +3731,7 @@ async function loadFleetMap() {
         </div>
         <div class="mapbox-shell">
           <div id="fleet-map" class="mapbox-map" aria-label="Fleet map"></div>
-          <div id="fleet-map-message" class="mapbox-message">Preparing Mapbox...</div>
+          <div id="fleet-map-message" class="mapbox-message">Map loads automatically when this panel enters view.</div>
         </div>
         <div class="fleet-map-canvas route-list">
           ${activeLoads.length ? activeLoads.slice(0, 10).map((load) => renderFleetRoute(load, telemetryForLoad(load, telemetry), predictions[load.id])).join("") : '<div class="empty-state compact-empty">No active loads to map.</div>'}
@@ -3625,10 +3769,28 @@ async function loadFleetMap() {
 
     document.querySelector("#reload-fleet-map").addEventListener("click", loadFleetMap);
     bindOperationalExceptionActions();
-    renderMapboxFleetMap(activeLoads, telemetry.positions);
+    scheduleMapboxFleetMap(activeLoads, telemetry.positions);
   } catch (error) {
     root.innerHTML = `<div class="empty-state">Fleet map is not ready: ${escapeHtml(error.message)}</div>`;
   }
+}
+
+function scheduleMapboxFleetMap(activeLoads, positions = []) {
+  fleetMapObserver?.disconnect();
+  fleetMapObserver = null;
+  const mapEl = document.querySelector("#fleet-map");
+  if (!mapEl) return;
+  if (!("IntersectionObserver" in window)) {
+    renderMapboxFleetMap(activeLoads, positions);
+    return;
+  }
+  fleetMapObserver = new IntersectionObserver((entries, observer) => {
+    if (!entries.some((entry) => entry.isIntersecting)) return;
+    observer.disconnect();
+    fleetMapObserver = null;
+    renderMapboxFleetMap(activeLoads, positions);
+  }, { threshold: 0.01 });
+  fleetMapObserver.observe(mapEl);
 }
 
 function renderTelematicsOverview(telemetry) {
@@ -3969,7 +4131,9 @@ async function renderMapboxFleetMap(activeLoads, positions = []) {
     return;
   }
 
-  if (!window.mapboxgl) {
+  try {
+    await ensureMapboxLoaded();
+  } catch {
     messageEl.textContent = "Mapbox could not load. Check internet access or CDN permissions.";
     return;
   }
@@ -5375,9 +5539,7 @@ async function handleEmailInvoiceBatch(button) {
 }
 
 async function openInvoiceBatchDialog() {
-  if (!invoiceBatchState.customers.length) {
-    await loadInvoiceBatches();
-  }
+  await loadInvoiceBatches();
   const dialog = document.querySelector("#invoice-batch-dialog");
   const form = document.querySelector("#invoice-batch-form");
   form.reset();
@@ -6856,7 +7018,7 @@ function initializeProfitabilityPivot(records){profitabilityPivotRecords=records
 function currentProfitabilityPivot(){const data=new FormData(document.querySelector("#profitability-pivot-controls"));return profitabilityPivot(profitabilityPivotRecords,String(data.get("group_by")),String(data.get("sort_by")));}
 function renderProfitabilityPivot(){const rows=currentProfitabilityPivot();const root=document.querySelector("#profitability-pivot-results");root.innerHTML=`<div class="data-row profitability-pivot-row data-row-head"><span>Group</span><span>Loads</span><span>Revenue</span><span>Cost</span><span>Margin</span><span>Margin %</span></div>${rows.map((row)=>`<div class="data-row profitability-pivot-row"><strong>${escapeHtml(formatStatus(row.label))}</strong><span>${row.loads}</span><span>${formatMoney(row.revenue)}</span><span>${formatMoney(row.cost)}</span><span>${formatMoney(row.margin)}</span><span>${formatPercent(row.margin_percent)}</span></div>`).join("")||'<div class="empty-state">No profitability data available.</div>'}`;}
 function exportProfitabilityPivot(){const rows=currentProfitabilityPivot().map((row)=>({group:row.label,loads:row.loads,revenue:row.revenue,cost:row.cost,margin:row.margin,margin_percent:row.margin_percent}));downloadCsv("cyrra-profitability-pivot.csv",rows);}
-function exportProfitabilityPivotXlsx(){try{const rows=currentProfitabilityPivot().map((row)=>({group:row.label,loads:row.loads,revenue:row.revenue,cost:row.cost,margin:row.margin,margin_percent:row.margin_percent}));downloadBlob("cyrra-profitability-pivot.xlsx",buildXlsxBlob(rows,"Profitability Pivot"));}catch(error){window.alert(error.message);}}
+async function exportProfitabilityPivotXlsx(){try{await ensureFflateLoaded();const rows=currentProfitabilityPivot().map((row)=>({group:row.label,loads:row.loads,revenue:row.revenue,cost:row.cost,margin:row.margin,margin_percent:row.margin_percent}));downloadBlob("cyrra-profitability-pivot.xlsx",buildXlsxBlob(rows,"Profitability Pivot"));}catch(error){window.alert(error.message);}}
 function previewProfitabilityPivotPdf(){const form=document.querySelector("#profitability-pivot-controls");const groupLabel=form.elements.group_by.options[form.elements.group_by.selectedIndex].textContent;const sortLabel=form.elements.sort_by.options[form.elements.sort_by.selectedIndex].textContent;const rows=currentProfitabilityPivot();let dialog=document.querySelector("#report-print-dialog");if(!dialog){dialog=document.createElement("dialog");dialog.id="report-print-dialog";dialog.className="invoice-preview-dialog";document.body.append(dialog);}dialog.innerHTML=`<div class="invoice-preview-toolbar"><button type="button" data-close-report-print>Close</button><button class="primary-button" type="button" data-print-report>Print / Save PDF</button></div><article class="invoice-sheet report-print-sheet"><header class="invoice-brand-header"><div class="invoice-brand"><img src="assets/cyrra-logo.png" alt="Cyrra logo"><div><strong>Cyrra TMS</strong><span>Reports / Analytics</span><small>Generated ${formatDateTime(new Date().toISOString())}</small></div></div><div class="invoice-title"><h1>REPORT</h1><strong>Profitability Pivot</strong><span>Grouped by ${escapeHtml(groupLabel)}</span></div></header><section class="report-print-meta"><div><span>Group by</span><strong>${escapeHtml(groupLabel)}</strong></div><div><span>Sort by</span><strong>${escapeHtml(sortLabel)}</strong></div><div><span>Rows</span><strong>${rows.length}</strong></div></section><table class="invoice-lines"><thead><tr><th>Group</th><th>Loads</th><th>Revenue</th><th>Cost</th><th>Margin</th><th>Margin %</th></tr></thead><tbody>${rows.map((row)=>`<tr><td><strong>${escapeHtml(formatStatus(row.label))}</strong></td><td>${row.loads}</td><td>${formatMoney(row.revenue)}</td><td>${formatMoney(row.cost)}</td><td>${formatMoney(row.margin)}</td><td>${formatPercent(row.margin_percent)}</td></tr>`).join("")}</tbody></table><footer><p>Cyrra TMS Profitability Report</p><small>Generated from current staging report data and selected pivot configuration.</small></footer></article>`;dialog.querySelector("[data-close-report-print]").addEventListener("click",()=>dialog.close());dialog.querySelector("[data-print-report]").addEventListener("click",()=>{document.body.classList.add("invoice-printing");window.print();});dialog.showModal();}
 
 function renderProfitabilityRows(records) {
@@ -8857,9 +9019,9 @@ function renderFilteredLoads() {
               ${can("manage_operations") ? `<input type="checkbox" data-select-row value="${load.id}" aria-label="Select load ${escapeAttribute(load.load_no)}" ${loadListState.selectedIds.has(load.id) ? "checked" : ""}>` : ""}
               <span class="load-number-cell"><strong>${escapeHtml(load.load_no)}</strong>${load.reference_no ? `<small>${escapeHtml(load.reference_no)}</small>` : ""}</span>
               ${loadListState.columns.includes("status") ? `<span class="load-status-stack"><strong class="load-operation-badge" data-state="${loadStatusTone(operationalLoadStatus(load))}">${formatStatus(operationalLoadStatus(load))}</strong><small>${formatStatus(billingLoadStatus(load))}</small></span>` : ""}
-              ${loadListState.columns.includes("customer") ? `<span>${escapeHtml(load.customers?.name || "-")}</span>` : ""}
+              ${loadListState.columns.includes("customer") ? `<span class="load-customer-cell">${escapeHtml(load.customers?.name || "-")}</span>` : ""}
               ${loadListState.columns.includes("route") ? `<span class="load-route-cell">${load.carriers?.name ? `<strong>${escapeHtml(load.carriers.name)}</strong>` : ""}<small>${escapeHtml(routeLabel(load))}</small></span>` : ""}
-              ${loadListState.columns.includes("pickup") ? `<span>${loadPickupWindow(load)}</span>` : ""}
+              ${loadListState.columns.includes("pickup") ? `<span class="load-pickup-cell">${loadPickupWindow(load)}</span>` : ""}
               <div class="row-actions">
                 <button class="row-action load-open-action" type="button" data-load-id="${load.id}">Open</button>
                 ${can("manage_operations") ? `<button class="row-action" type="button" data-edit-load="${load.id}">Edit</button><button class="row-action" type="button" data-duplicate-load="${load.id}">Duplicate</button>` : ""}
