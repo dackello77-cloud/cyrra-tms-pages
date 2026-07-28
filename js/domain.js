@@ -180,23 +180,62 @@ export function validateInvoiceNumberingSettings({ prefix, nextNumber, padding }
   };
 }
 
-export function validateCompanyTenantProfile({ legalName, timezone, locale, country, status = "active" } = {}) {
+export function normalizeCompanyFeatureFlags(flags = {}) {
+  const input = flags && typeof flags === "object" ? flags : {};
+  return {
+    driver_app: Boolean(input.driver_app),
+    customer_portal: Boolean(input.customer_portal),
+    carrier_portal: Boolean(input.carrier_portal),
+    public_tracking: Boolean(input.public_tracking),
+    advanced_billing: Boolean(input.advanced_billing),
+    reports_exports: Boolean(input.reports_exports),
+  };
+}
+
+export function validateCompanyTenantProfile({ legalName, timezone, locale, country, status = "active", planCode = "standard", featureFlags = {} } = {}) {
   const legal_name = String(legalName || "").trim();
   const tenantTimezone = String(timezone || "America/Chicago").trim();
   const tenantLocale = String(locale || "en-US").trim();
   const tenantCountry = String(country || "USA").trim();
   const tenantStatus = String(status || "active").trim();
+  const plan_code = String(planCode || "standard").trim();
   if (!legal_name) throw new Error("Company legal name is required.");
   if (!tenantTimezone) throw new Error("Company timezone is required.");
   if (!tenantLocale) throw new Error("Company locale is required.");
   if (!tenantCountry) throw new Error("Company country is required.");
   if (!["active", "inactive"].includes(tenantStatus)) throw new Error("Unsupported company status.");
+  if (!["starter", "standard", "enterprise"].includes(plan_code)) throw new Error("Unsupported company plan.");
   return {
     legal_name,
     timezone: tenantTimezone,
     locale: tenantLocale,
     country: tenantCountry,
     status: tenantStatus,
+    plan_code,
+    feature_flags: normalizeCompanyFeatureFlags(featureFlags),
+  };
+}
+
+export function validateCompanyBranchInput({ name, branchCode = "", address = "", timezone = "America/Chicago", status = "active", terminalType = "terminal" } = {}) {
+  const branchName = String(name || "").trim();
+  const normalizedCode = String(branchCode || "").trim().toUpperCase().replace(/[^A-Z0-9_-]+/g, "");
+  const branchAddress = String(address || "").trim();
+  const branchTimezone = String(timezone || "America/Chicago").trim();
+  const branchStatus = String(status || "active").trim();
+  const normalizedTerminalType = String(terminalType || "terminal").trim();
+  if (!branchName) throw new Error("Branch name is required.");
+  if (branchName.length > 120) throw new Error("Branch name must be 120 characters or fewer.");
+  if (normalizedCode.length > 24) throw new Error("Branch code must be 24 characters or fewer.");
+  if (!branchTimezone) throw new Error("Branch timezone is required.");
+  if (!["active", "inactive"].includes(branchStatus)) throw new Error("Unsupported branch status.");
+  if (!["terminal", "branch", "yard", "office"].includes(normalizedTerminalType)) throw new Error("Unsupported terminal type.");
+  return {
+    name: branchName,
+    branch_code: normalizedCode || null,
+    address: branchAddress,
+    timezone: branchTimezone,
+    status: branchStatus,
+    terminal_type: normalizedTerminalType,
   };
 }
 
@@ -225,6 +264,47 @@ export function loadDocumentStatus(load, documents = []) {
   const approvedPod = documents.some((document) => document.doc_type === "pod" && document.status === "approved");
   if (approvedPod) return "pod_approved";
   return hasPod ? "pod_pending" : "pod_missing";
+}
+
+const documentAutomationStatuses = new Set(["queued", "extracted", "needs_review", "approved", "rejected", "ignored"]);
+const documentAutomationSources = new Set(["manual", "ocr", "ai", "email", "import"]);
+const documentAutomationClassifications = new Set(["rate_con", "bol", "pod", "invoice", "receipt", "insurance", "registration", "license", "medical", "maintenance", "photo", "other"]);
+
+export function normalizeDocumentAutomationReview(input = {}) {
+  const status = documentAutomationStatuses.has(input.status) ? input.status : "needs_review";
+  const source_type = documentAutomationSources.has(input.sourceType || input.source_type) ? (input.sourceType || input.source_type) : "manual";
+  const classification = documentAutomationClassifications.has(input.classification) ? input.classification : "other";
+  const confidenceRaw = input.confidenceScore ?? input.confidence_score;
+  const confidence_score = confidenceRaw === "" || confidenceRaw === null || confidenceRaw === undefined ? null : Number(confidenceRaw);
+  if (confidence_score !== null && (!Number.isFinite(confidence_score) || confidence_score < 0 || confidence_score > 1)) {
+    throw new Error("Confidence score must be between 0 and 1.");
+  }
+  const fields = input.extractedFields ?? input.extracted_fields ?? {};
+  const warnings = input.fieldWarnings ?? input.field_warnings ?? [];
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw new Error("Extracted fields must be an object.");
+  if (!Array.isArray(warnings)) throw new Error("Field warnings must be an array.");
+  return {
+    status,
+    source_type,
+    classification,
+    confidence_score,
+    extracted_fields: Object.fromEntries(Object.entries(fields).filter(([key]) => String(key).trim())),
+    field_warnings: warnings.map((warning) => String(warning || "").trim()).filter(Boolean),
+    reviewer_note: String(input.reviewerNote ?? input.reviewer_note ?? "").trim() || null,
+  };
+}
+
+export function documentAutomationSummary(reviews = []) {
+  const counts = { queued: 0, extracted: 0, needs_review: 0, approved: 0, rejected: 0, ignored: 0 };
+  reviews.forEach((review) => {
+    if (counts[review.status] !== undefined) counts[review.status] += 1;
+  });
+  return {
+    total: reviews.length,
+    open: counts.queued + counts.extracted + counts.needs_review,
+    reviewed: counts.approved + counts.rejected + counts.ignored,
+    counts,
+  };
 }
 
 export function isLoadOperationallyClosed(load) {

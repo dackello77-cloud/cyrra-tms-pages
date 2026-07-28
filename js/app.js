@@ -74,6 +74,7 @@ import {
   listCustomerShipmentRequests,
   listCustomerPortalMessages,
   listDocuments,
+  listDocumentAutomationReviews,
   listDispatchDocumentStates,
   listDrivers,
   listFacilities,
@@ -154,6 +155,8 @@ import {
   updateTmsDocumentStatus,
   updateCompanyBillingSettings,
   updateCompanyTenantProfile,
+  upsertCompanyBranch,
+  upsertDocumentAutomationReview,
   uploadTmsDocument,
 } from "./api.js";
 import { appConfig } from "./config.js";
@@ -192,6 +195,8 @@ import {
   loadTotalMiles,
   latestTelematicsRecords,
   matchesDispatchSavedView,
+  documentAutomationSummary,
+  normalizeDocumentAutomationReview,
   operationalLoadStatus,
   settlementStatusOptions,
   settlementPayBatchCandidates,
@@ -199,6 +204,7 @@ import {
   validateMessageBody,
   validateDuplicateLoadInput,
   validateCustomerBillingCycle,
+  validateCompanyBranchInput,
   validateCompanyTenantProfile,
   validateDriverProblemReport,
   validateFacilityInput,
@@ -4417,15 +4423,27 @@ function renderDocumentCenter() {
           <p id="document-center-message" class="form-message"></p>
         </form>
       </article>
+      <article class="panel document-automation-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Automation Review</h2>
+            <p>Provider-neutral extraction and classification review queue.</p>
+          </div>
+          <button id="reload-document-automation" type="button">Refresh</button>
+        </div>
+        <div id="document-automation-root" class="document-automation-root"><div class="empty-state">Loading automation queue...</div></div>
+      </article>
     </section>
   `;
 
   document.querySelector("#reload-document-center").addEventListener("click", loadDocumentCenter);
+  document.querySelector("#reload-document-automation").addEventListener("click", loadDocumentAutomationReview);
   document.querySelector("#document-center-form").addEventListener("submit", handleCreateCenterDocument);
   document.querySelector('#document-center-form [name="entity_type"]').addEventListener("change", loadDocumentEntityOptions);
   configureCrudFormAccess("#document-center-form", "manage_documents", "Add Document", resetCenterDocumentForm);
   loadDocumentEntityOptions();
   loadDocumentCenter();
+  loadDocumentAutomationReview();
 }
 
 async function loadDocumentEntityOptions() {
@@ -4507,6 +4525,126 @@ async function loadDocumentCenter() {
   }
 }
 
+async function loadDocumentAutomationReview() {
+  const root = document.querySelector("#document-automation-root");
+  if (!root) return;
+  root.innerHTML = '<div class="empty-state">Loading automation queue...</div>';
+  try {
+    const reviews = await listDocumentAutomationReviews();
+    root.innerHTML = renderDocumentAutomationReview(reviews);
+    root.querySelectorAll("[data-document-automation-form]").forEach((form) => form.addEventListener("submit", handleDocumentAutomationSave));
+    root.querySelectorAll("[data-document-review-action]").forEach((button) => button.addEventListener("click", handleDocumentAutomationAction));
+  } catch (error) {
+    root.innerHTML = `<div class="empty-state">Automation review is not ready: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderDocumentAutomationReview(reviews = []) {
+  const summary = documentAutomationSummary(reviews);
+  return `
+    <div class="document-automation-summary">
+      <article><span>Open</span><strong>${summary.open}</strong></article>
+      <article><span>Reviewed</span><strong>${summary.reviewed}</strong></article>
+      <article><span>Total</span><strong>${summary.total}</strong></article>
+    </div>
+    <div class="document-automation-list">
+      ${reviews.length ? reviews.map(renderDocumentAutomationCard).join("") : '<div class="empty-state compact-empty">No automation reviews yet.</div>'}
+    </div>
+  `;
+}
+
+function renderDocumentAutomationCard(review) {
+  const document = review.documents || {};
+  const fieldsText = Object.entries(review.extracted_fields || {}).map(([key, value]) => `${key}: ${value}`).join("\n");
+  const warningsText = (review.field_warnings || []).join("\n");
+  const confidence = review.confidence_score === null || review.confidence_score === undefined ? "" : Number(review.confidence_score).toFixed(2);
+  return `
+    <article class="document-automation-card">
+      <header>
+        <div>
+          <strong>${escapeHtml(document.file_name || formatStatus(document.doc_type || "document"))}</strong>
+          <small>${escapeHtml(formatStatus(document.entity_type || "-"))} · ${escapeHtml(formatStatus(document.status || "-"))}</small>
+        </div>
+        <span class="status-pill">${escapeHtml(formatStatus(review.status))}</span>
+      </header>
+      <form class="record-form document-automation-form" data-document-automation-form data-document-id="${review.document_id}">
+        <label><span>Classification</span><select name="classification">${["rate_con", "bol", "pod", "invoice", "receipt", "insurance", "registration", "license", "medical", "maintenance", "photo", "other"].map((item) => `<option value="${item}" ${review.classification === item ? "selected" : ""}>${formatStatus(item)}</option>`).join("")}</select></label>
+        <label><span>Source</span><select name="source_type">${["manual", "ocr", "ai", "email", "import"].map((item) => `<option value="${item}" ${review.source_type === item ? "selected" : ""}>${formatStatus(item)}</option>`).join("")}</select></label>
+        <label><span>Status</span><select name="status">${["queued", "extracted", "needs_review", "approved", "rejected", "ignored"].map((item) => `<option value="${item}" ${review.status === item ? "selected" : ""}>${formatStatus(item)}</option>`).join("")}</select></label>
+        <label><span>Confidence</span><input name="confidence_score" type="number" min="0" max="1" step="0.01" value="${escapeAttribute(confidence)}"></label>
+        <label class="document-automation-wide"><span>Extracted fields</span><textarea name="extracted_fields" rows="4" placeholder="load_no: 123&#10;total: 1550">${escapeHtml(fieldsText)}</textarea></label>
+        <label class="document-automation-wide"><span>Warnings</span><textarea name="field_warnings" rows="2" placeholder="One warning per line">${escapeHtml(warningsText)}</textarea></label>
+        <label class="document-automation-wide"><span>Review note</span><textarea name="reviewer_note" rows="2">${escapeHtml(review.reviewer_note || "")}</textarea></label>
+        <div class="document-automation-actions">
+          ${document.signed_url ? `<a class="row-action" href="${escapeAttribute(document.signed_url)}" target="_blank" rel="noreferrer">Open</a>` : ""}
+          <button type="submit">Save</button>
+          <button type="button" data-document-review-action="approved" data-document-id="${review.document_id}">Approve</button>
+          <button type="button" data-document-review-action="rejected" data-document-id="${review.document_id}">Reject</button>
+          <button type="button" data-document-review-action="ignored" data-document-id="${review.document_id}">Ignore</button>
+        </div>
+        <p class="form-message" data-document-automation-message></p>
+      </form>
+    </article>
+  `;
+}
+
+function parseDocumentAutomationFields(value) {
+  const fields = {};
+  String(value || "").split(/\n+/).forEach((line) => {
+    const [key, ...rest] = line.split(":");
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) return;
+    fields[normalizedKey] = rest.join(":").trim();
+  });
+  return fields;
+}
+
+function collectDocumentAutomationForm(form, overrideStatus = null) {
+  const formData = new FormData(form);
+  return normalizeDocumentAutomationReview({
+    status: overrideStatus || formData.get("status"),
+    sourceType: formData.get("source_type"),
+    classification: formData.get("classification"),
+    confidenceScore: formData.get("confidence_score"),
+    extractedFields: parseDocumentAutomationFields(formData.get("extracted_fields")),
+    fieldWarnings: String(formData.get("field_warnings") || "").split(/\n+/),
+    reviewerNote: formData.get("reviewer_note"),
+  });
+}
+
+async function handleDocumentAutomationSave(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = form.querySelector("[data-document-automation-message]");
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true;
+  message.textContent = "Saving review...";
+  try {
+    await upsertDocumentAutomationReview(form.dataset.documentId, collectDocumentAutomationForm(form));
+    await loadDocumentAutomationReview();
+  } catch (error) {
+    message.dataset.state = "error";
+    message.textContent = error.message;
+    button.disabled = false;
+  }
+}
+
+async function handleDocumentAutomationAction(event) {
+  const button = event.currentTarget;
+  const form = button.closest("[data-document-automation-form]");
+  const message = form.querySelector("[data-document-automation-message]");
+  button.disabled = true;
+  message.textContent = `${formatStatus(button.dataset.documentReviewAction)} review...`;
+  try {
+    await upsertDocumentAutomationReview(button.dataset.documentId, collectDocumentAutomationForm(form, button.dataset.documentReviewAction));
+    await loadDocumentAutomationReview();
+  } catch (error) {
+    message.dataset.state = "error";
+    message.textContent = error.message;
+    button.disabled = false;
+  }
+}
+
 async function handleCreateCenterDocument(event) {
   event.preventDefault();
 
@@ -4529,6 +4667,7 @@ async function handleCreateCenterDocument(event) {
     resetCenterDocumentForm();
     message.textContent = "Document uploaded securely.";
     await loadDocumentCenter();
+    await loadDocumentAutomationReview();
   } catch (error) {
     message.textContent = error.message;
   }
@@ -7585,6 +7724,7 @@ async function loadSettings() {
     document.querySelector("#reload-settings").addEventListener("click", loadSettings);
     document.querySelector("#company-billing-form").addEventListener("submit", handleCompanyBillingSave);
     document.querySelectorAll("[data-company-tenant-form]").forEach((form) => form.addEventListener("submit", handleCompanyTenantSave));
+    document.querySelectorAll("[data-company-branch-form]").forEach((form) => form.addEventListener("submit", handleCompanyBranchSave));
     bindIntegrationFoundation();
     bindUserManagement(directory.branches, directory.drivers || []);
     bindDriverAppManagement(directory.drivers || []);
@@ -7657,6 +7797,7 @@ function renderCompanyTenantPanel(tenants = []) {
 
 function renderCompanyTenantCard(company) {
   const branches = company.branches || [];
+  const flags = company.feature_flags || {};
   return `
     <article class="company-tenant-card">
       <form class="record-form company-tenant-form" data-company-tenant-form data-company-id="${company.id}">
@@ -7673,26 +7814,63 @@ function renderCompanyTenantCard(company) {
         <label><span>Timezone</span><input name="timezone" value="${escapeAttribute(company.timezone || "America/Chicago")}" required></label>
         <label><span>Locale</span><input name="locale" value="${escapeAttribute(company.locale || "en-US")}" required></label>
         <label><span>Country</span><input name="country" value="${escapeAttribute(company.country || "USA")}" required></label>
+        <label><span>Plan</span><select name="plan_code"><option value="starter" ${company.plan_code === "starter" ? "selected" : ""}>Starter</option><option value="standard" ${company.plan_code !== "starter" && company.plan_code !== "enterprise" ? "selected" : ""}>Standard</option><option value="enterprise" ${company.plan_code === "enterprise" ? "selected" : ""}>Enterprise</option></select></label>
         <label><span>Status</span><select name="status"><option value="active" ${company.status === "active" ? "selected" : ""}>Active</option><option value="inactive" ${company.status === "inactive" ? "selected" : ""}>Inactive</option></select></label>
+        <fieldset class="company-feature-flags">
+          <legend>Feature flags</legend>
+          ${renderCompanyFeatureFlag("driver_app", "Driver App", flags.driver_app)}
+          ${renderCompanyFeatureFlag("customer_portal", "Customer Portal", flags.customer_portal)}
+          ${renderCompanyFeatureFlag("carrier_portal", "Carrier Portal", flags.carrier_portal)}
+          ${renderCompanyFeatureFlag("public_tracking", "Public Tracking", flags.public_tracking)}
+          ${renderCompanyFeatureFlag("advanced_billing", "Advanced Billing", flags.advanced_billing)}
+          ${renderCompanyFeatureFlag("reports_exports", "Reports Exports", flags.reports_exports)}
+        </fieldset>
         <div class="form-actions"><button type="submit">Save Company</button></div>
         <p class="form-message" data-company-tenant-message></p>
       </form>
       <section class="tenant-branches">
         <div class="inline-section-header"><div><span>Branches / Terminals</span><small>${branches.length} linked branch${branches.length === 1 ? "" : "es"}</small></div></div>
+        ${renderTenantBranchForm(company.id)}
         <div class="tenant-branch-list">
-          ${branches.length ? branches.map(renderTenantBranch).join("") : '<div class="empty-state compact-empty">No branches linked to this company yet.</div>'}
+          ${branches.length ? branches.map((branch) => renderTenantBranch(company.id, branch)).join("") : '<div class="empty-state compact-empty">No branches linked to this company yet.</div>'}
         </div>
       </section>
     </article>
   `;
 }
 
-function renderTenantBranch(branch) {
+function renderCompanyFeatureFlag(value, label, checked) {
+  return `<label class="toggle-row"><input type="checkbox" name="feature_flags" value="${value}" ${checked ? "checked" : ""}><span>${label}</span></label>`;
+}
+
+function renderTenantBranchForm(companyId, branch = null) {
+  const isEdit = Boolean(branch?.id);
+  return `
+    <form class="record-form tenant-branch-form" data-company-branch-form data-company-id="${companyId}" data-branch-id="${branch?.id || ""}">
+      <input name="name" placeholder="Branch name" value="${escapeAttribute(branch?.name || "")}" required>
+      <input name="branch_code" placeholder="Code" maxlength="24" value="${escapeAttribute(branch?.branch_code || "")}">
+      <select name="terminal_type">
+        ${["terminal", "branch", "yard", "office"].map((type) => `<option value="${type}" ${(branch?.terminal_type || "terminal") === type ? "selected" : ""}>${formatStatus(type)}</option>`).join("")}
+      </select>
+      <select name="status">
+        <option value="active" ${(branch?.status || "active") === "active" ? "selected" : ""}>Active</option>
+        <option value="inactive" ${branch?.status === "inactive" ? "selected" : ""}>Inactive</option>
+      </select>
+      <input name="timezone" placeholder="Timezone" value="${escapeAttribute(branch?.timezone || "America/Chicago")}" required>
+      <textarea name="address" rows="2" placeholder="Address">${escapeHtml(branch?.address || "")}</textarea>
+      <button type="submit">${isEdit ? "Save Branch" : "Add Branch"}</button>
+      <p class="form-message" data-company-branch-message></p>
+    </form>
+  `;
+}
+
+function renderTenantBranch(companyId, branch) {
   return `
     <article class="tenant-branch-card">
       <div><strong>${escapeHtml(branch.name)}</strong><small>${escapeHtml(branch.branch_code || formatStatus(branch.terminal_type || "terminal"))}</small></div>
       <span>${escapeHtml(branch.address || "-")}</span>
       <small>${escapeHtml(branch.timezone || "America/Chicago")} · ${formatStatus(branch.status)}</small>
+      ${renderTenantBranchForm(companyId, branch)}
     </article>
   `;
 }
@@ -7895,6 +8073,8 @@ async function handleCompanyTenantSave(event) {
       locale: formData.get("locale"),
       country: formData.get("country"),
       status: formData.get("status"),
+      planCode: formData.get("plan_code"),
+      featureFlags: Object.fromEntries([...form.querySelectorAll("input[name='feature_flags']")].map((input) => [input.value, input.checked])),
     });
     await updateCompanyTenantProfile(form.dataset.companyId, {
       ...profile,
@@ -7904,6 +8084,35 @@ async function handleCompanyTenantSave(event) {
     settingsActiveTab = "Company";
     await loadSettings();
   } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleCompanyBranchSave(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = form.querySelector("[data-company-branch-message]");
+  const button = form.querySelector("button[type='submit']");
+  const formData = new FormData(form);
+  button.disabled = true;
+  message.textContent = "Saving branch...";
+  try {
+    const branch = validateCompanyBranchInput({
+      name: formData.get("name"),
+      branchCode: formData.get("branch_code"),
+      address: formData.get("address"),
+      timezone: formData.get("timezone"),
+      status: formData.get("status"),
+      terminalType: formData.get("terminal_type"),
+    });
+    await upsertCompanyBranch(form.dataset.companyId, form.dataset.branchId, branch);
+    settingsNotice = form.dataset.branchId ? "Branch updated." : "Branch added.";
+    settingsActiveTab = "Company";
+    await loadSettings();
+  } catch (error) {
+    message.dataset.state = "error";
     message.textContent = error.message;
   } finally {
     button.disabled = false;

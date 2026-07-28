@@ -36,6 +36,7 @@ export const tmsTables = [
   "load_stops",
   "load_financials",
   "documents",
+  "document_automation_reviews",
   "invoices",
   "invoice_line_items",
   "invoice_credit_memos",
@@ -99,7 +100,7 @@ export async function listBranches() {
 export async function listCompanyTenants() {
   const { data, error } = await supabase
     .from("companies")
-    .select("id,legal_name,dba_name,status,timezone,locale,country,created_at,updated_at,branches(id,name,company_name,address,timezone,status,branch_code,terminal_type)")
+    .select("id,legal_name,dba_name,status,timezone,locale,country,plan_code,feature_flags,created_at,updated_at,branches(id,name,company_name,address,timezone,status,branch_code,terminal_type)")
     .order("legal_name");
   if (error) throw error;
   return data ?? [];
@@ -135,6 +136,16 @@ export async function updateCompanyTenantProfile(companyId, profile) {
   const { data, error } = await supabase.rpc("update_company_profile", {
     target_company: companyId,
     profile_payload: profile,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function upsertCompanyBranch(companyId, branchId, branch) {
+  const { data, error } = await supabase.rpc("upsert_company_branch", {
+    target_company: companyId,
+    target_branch: branchId || null,
+    branch_payload: branch,
   });
   if (error) throw error;
   return data;
@@ -1441,7 +1452,7 @@ export async function createLoadDocument(document) {
 export async function listDocuments() {
   const { data, error } = await supabase
     .from("documents")
-    .select("id, entity_type, entity_id, doc_type, file_url, storage_bucket, storage_path, file_name, mime_type, file_size, status, uploaded_by, ocr_text, created_at")
+    .select("id, entity_type, entity_id, doc_type, file_url, storage_bucket, storage_path, file_name, mime_type, file_size, status, uploaded_by, ocr_text, created_at, document_automation_reviews(id,status,source_type,classification,confidence_score,extracted_fields,field_warnings,reviewer_note,reviewed_by,reviewed_at,updated_at)")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -1449,6 +1460,27 @@ export async function listDocuments() {
   }
 
   return attachDocumentLinks(data ?? []);
+}
+
+export async function listDocumentAutomationReviews() {
+  const { data, error } = await supabase
+    .from("document_automation_reviews")
+    .select("id,branch_id,document_id,status,source_type,classification,confidence_score,extracted_fields,field_warnings,reviewer_note,reviewed_by,reviewed_at,created_at,updated_at,documents(id,entity_type,entity_id,doc_type,file_name,status,storage_bucket,storage_path,file_url,created_at)")
+    .order("updated_at", { ascending: false });
+  if (error) throw error;
+  const reviews = data ?? [];
+  const documents = await attachDocumentLinks(reviews.map((review) => review.documents).filter(Boolean));
+  const byId = new Map(documents.map((document) => [document.id, document]));
+  return reviews.map((review) => ({ ...review, documents: byId.get(review.document_id) || review.documents }));
+}
+
+export async function upsertDocumentAutomationReview(documentId, review) {
+  const { data, error } = await supabase.rpc("upsert_document_automation_review", {
+    target_document: documentId,
+    review_payload: review,
+  });
+  if (error) throw error;
+  return data;
 }
 
 export async function createDocument(document) {
