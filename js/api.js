@@ -45,6 +45,8 @@ export const tmsTables = [
   "payments",
   "settlements",
   "settlement_items",
+  "settlement_adjustments",
+  "settlement_post_batch_corrections",
   "settlement_pay_batches",
   "settlement_pay_batch_items",
   "maintenance",
@@ -597,8 +599,55 @@ export async function signOut() {
   }
 }
 
+export async function getAuthenticatorAssuranceLevel() {
+  const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (error) throw error;
+  return data;
+}
+
+export async function listMfaFactors() {
+  const { data, error } = await supabase.auth.mfa.listFactors();
+  if (error) throw error;
+  return data?.all ?? [];
+}
+
+export async function enrollMfaFactor(friendlyName) {
+  const { data, error } = await supabase.auth.mfa.enroll({ factorType: "totp", friendlyName });
+  if (error) throw error;
+  return data;
+}
+
+export async function challengeMfaFactor(factorId) {
+  const { data, error } = await supabase.auth.mfa.challenge({ factorId });
+  if (error) throw error;
+  return data;
+}
+
+export async function verifyMfaFactor(factorId, challengeId, code) {
+  const { data, error } = await supabase.auth.mfa.verify({ factorId, challengeId, code });
+  if (error) throw error;
+  return data;
+}
+
+export async function unenrollMfaFactor(factorId) {
+  const { data, error } = await supabase.auth.mfa.unenroll({ factorId });
+  if (error) throw error;
+  return data;
+}
+
 export function onAuthStateChange(callback) {
   return supabase.auth.onAuthStateChange((_event, session) => callback(session));
+}
+
+export async function upsertPushSubscription(subscription) {
+  const { data, error } = await supabase.rpc("upsert_push_subscription", { subscription_payload: subscription });
+  if (error) throw error;
+  return data;
+}
+
+export async function deletePushSubscription(endpoint) {
+  const { error } = await supabase.rpc("delete_push_subscription", { target_endpoint: endpoint });
+  if (error) throw error;
 }
 
 export async function listCustomers() {
@@ -696,7 +745,7 @@ export async function updateFacility(facilityId, facility) {
 export async function listCarriers() {
   const { data, error } = await supabase
     .from("carriers")
-    .select("id, mc, dot, name, status, safety_rating, insurance_expiry, contact_name, contact_email, contact_phone, payment_terms_days, w9_status, pay_type, pay_rate, notes, created_at")
+    .select("id, mc, dot, name, status, safety_rating, insurance_expiry, contact_name, contact_email, contact_phone, payment_terms_days, w9_status, pay_type, pay_rate, pay_components, notes, created_at")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -710,7 +759,7 @@ export async function createCarrier(carrier) {
   const { data, error } = await supabase
     .from("carriers")
     .insert(carrier)
-    .select("id, mc, dot, name, status, safety_rating, insurance_expiry, contact_name, contact_email, contact_phone, payment_terms_days, w9_status, pay_type, pay_rate, notes, created_at")
+    .select("id, mc, dot, name, status, safety_rating, insurance_expiry, contact_name, contact_email, contact_phone, payment_terms_days, w9_status, pay_type, pay_rate, pay_components, notes, created_at")
     .single();
 
   if (error) {
@@ -725,7 +774,7 @@ export async function updateCarrier(carrierId, carrier) {
     .from("carriers")
     .update(carrier)
     .eq("id", carrierId)
-    .select("id, mc, dot, name, status, safety_rating, insurance_expiry, contact_name, contact_email, contact_phone, payment_terms_days, w9_status, pay_type, pay_rate, notes, created_at")
+    .select("id, mc, dot, name, status, safety_rating, insurance_expiry, contact_name, contact_email, contact_phone, payment_terms_days, w9_status, pay_type, pay_rate, pay_components, notes, created_at")
     .single();
 
   if (error) {
@@ -738,7 +787,7 @@ export async function updateCarrier(carrierId, carrier) {
 export async function listDrivers() {
   const { data, error } = await supabase
     .from("drivers")
-    .select("id, branch_id, auth_user_id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, status, created_at, branches(name)")
+    .select("id, branch_id, auth_user_id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, pay_components, status, created_at, branches(name)")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -779,7 +828,7 @@ export async function createDriver(driver) {
   const { data, error } = await supabase
     .from("drivers")
     .insert(driver)
-    .select("id, branch_id, auth_user_id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, status, created_at, branches(name)")
+    .select("id, branch_id, auth_user_id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, pay_components, status, created_at, branches(name)")
     .single();
 
   if (error) {
@@ -794,7 +843,7 @@ export async function updateDriver(driverId, driver) {
     .from("drivers")
     .update(driver)
     .eq("id", driverId)
-    .select("id, branch_id, auth_user_id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, status, created_at, branches(name)")
+    .select("id, branch_id, auth_user_id, name, phone, email, address, hire_date, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, cdl_no, cdl_expiry, medical_expiry, pay_type, pay_rate, pay_components, status, created_at, branches(name)")
     .single();
 
   if (error) {
@@ -1817,7 +1866,7 @@ export async function updateInvoiceCreditMemoStatus(creditMemoId, status) {
 export async function listSettlementCandidates() {
   const { data, error } = await supabase
     .from("loads")
-    .select("id,load_no,status,operational_status,document_status,billing_status,origin,destination,pickup_date,delivery_date,carrier_id,driver_id,carriers(name),drivers(name),load_financials(carrier_cost,driver_pay),settlement_items(id,payee_type,active)")
+    .select("id,load_no,status,operational_status,document_status,billing_status,origin,destination,pickup_date,delivery_date,loaded_miles,carrier_id,driver_id,carriers(name,pay_type,pay_rate,pay_components),drivers(name,pay_type,pay_rate,pay_components),load_financials(linehaul,fsc,accessorials,carrier_cost,driver_pay),settlement_items(id,payee_type,active)")
     .eq("operational_status", "delivered")
     .order("delivery_date", { ascending: true });
   if (error) throw error;
@@ -1827,7 +1876,7 @@ export async function listSettlementCandidates() {
 export async function listSettlements() {
   const { data, error } = await supabase
     .from("settlements")
-    .select("id,settlement_no,payee_type,carrier_id,driver_id,status,settlement_date,total_amount,notes,approved_at,paid_at,created_at,carriers(name),drivers(name),settlement_items(id,load_id,amount,description,active,loads(load_no,origin,destination,pickup_date,delivery_date))")
+    .select("id,branch_id,settlement_no,payee_type,carrier_id,driver_id,status,settlement_date,total_amount,notes,approved_at,paid_at,created_at,carriers(name),drivers(name),settlement_items(id,load_id,amount,description,active,pay_model_snapshot,pay_rate_snapshot,loaded_miles_snapshot,revenue_snapshot,calculation_snapshot,loads(load_no,origin,destination,pickup_date,delivery_date)),settlement_adjustments(id,adjustment_type,direction,amount,description,created_at)")
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data ?? [];
@@ -1842,10 +1891,43 @@ export async function listSettlementPayBatches() {
   return data ?? [];
 }
 
+export async function listSettlementPostBatchCorrections() {
+  const { data, error } = await supabase
+    .from("settlement_post_batch_corrections")
+    .select("id,branch_id,original_settlement_id,target_settlement_id,adjustment_id,payee_type,carrier_id,driver_id,direction,amount,reason,status,created_at")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createSettlementPostBatchCorrection(correction) {
+  const { data, error } = await supabase.rpc("create_settlement_post_batch_correction", {
+    correction_payload: correction,
+  });
+  if (error) throw error;
+  return data;
+}
+
 export async function createSettlementPayBatch(batch, settlementIds) {
   const { data, error } = await supabase.rpc("create_settlement_pay_batch", {
     batch_payload: batch,
     settlement_ids: settlementIds,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function saveSettlementAdjustment(adjustment) {
+  const { data, error } = await supabase.rpc("upsert_settlement_adjustment", {
+    adjustment_payload: adjustment,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteSettlementAdjustment(adjustmentId) {
+  const { data, error } = await supabase.rpc("delete_settlement_adjustment", {
+    target_adjustment_id: adjustmentId,
   });
   if (error) throw error;
   return data;

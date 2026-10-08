@@ -30,6 +30,7 @@ import {
   createInvoiceCreditMemo,
   createLoadSettlement,
   createSettlementPayBatch,
+  createSettlementPostBatchCorrection,
   createTrailer,
   createTruck,
   deleteTmsDocument,
@@ -98,6 +99,7 @@ import {
   listInvoiceCollectionNotes,
   listSettlementCandidates,
   listSettlementPayBatches,
+  listSettlementPostBatchCorrections,
   listSettlements,
   manageTmsUsers,
   listTrailers,
@@ -118,6 +120,14 @@ import {
   signIn,
   signOut,
   signUp,
+  getAuthenticatorAssuranceLevel,
+  listMfaFactors,
+  enrollMfaFactor,
+  challengeMfaFactor,
+  verifyMfaFactor,
+  unenrollMfaFactor,
+  upsertPushSubscription,
+  deletePushSubscription,
   sendTmsInvoice,
   sendTmsInvoiceBatch,
   updateInvoiceStatus,
@@ -130,6 +140,8 @@ import {
   updateIntegrationWebhookStatus,
   updateSettlementStatus,
   updateSettlementPayBatchStatus,
+  saveSettlementAdjustment,
+  deleteSettlementAdjustment,
   updateCarrier,
   updateCustomer,
   updateCustomerShipmentRequest,
@@ -176,6 +188,7 @@ import {
   getDispatchComplianceState,
   getMaintenanceDueState,
   hasTmsPermission,
+  mfaChallengeRequired,
   hosRiskState,
   invoiceBatchCandidates,
   invoiceFinancialState,
@@ -200,6 +213,13 @@ import {
   operationalLoadStatus,
   settlementStatusOptions,
   settlementPayBatchCandidates,
+  calculateSettlementPay,
+  settlementPayBatchDetailRows,
+  settlementPayBatchSummaryRows,
+  settlementStatementDetailRows,
+  settlementStatementSummaryRows,
+  validateSettlementAdjustment,
+  validateSettlementPostBatchCorrection,
   telematicsFreshness,
   validateMessageBody,
   validateDuplicateLoadInput,
@@ -231,6 +251,10 @@ import {
 } from "./domain.js";
 
 const authScreen = document.querySelector("#auth-screen");
+const mfaChallengeScreen = document.querySelector("#mfa-challenge-screen");
+const mfaChallengeForm = document.querySelector("#mfa-challenge-form");
+const mfaChallengeMessage = document.querySelector("#mfa-challenge-message");
+const mfaChallengeCancelButton = document.querySelector("#mfa-challenge-cancel");
 const appShell = document.querySelector("#app-shell");
 const loginForm = document.querySelector("#login-form");
 const loginMessage = document.querySelector("#login-message");
@@ -268,6 +292,8 @@ let fleetMapObserver = null;
 let fleetTelemetryData = { positions: [], hos: [], unavailableMessage: "" };
 let fleetNotice = "";
 let settingsNotice = "";
+let securityNotice = "";
+let mfaChallengeState = null;
 let integrationNotice = "";
 let settingsActiveTab = "Users";
 let notificationNotice = "";
@@ -659,7 +685,17 @@ function setPublicShellMode(enabled) {
 
 async function setAuthView(session) {
   const requestId = ++authViewRequest;
+  const alreadyBootedForSameUser = Boolean(
+    session && currentSession && currentSession.user.id === session.user.id && appShell.dataset.accessReady === "true"
+  );
   currentSession = session;
+  if (alreadyBootedForSameUser) {
+    // A routine auth event (token refresh, MFA elevation) for a user who is already using
+    // the app. Re-running the full boot sequence here would race with any in-progress
+    // page-local update (e.g. the Security page refreshing itself right after MFA verify)
+    // and could transiently wipe currentRoles, flashing "Access Restricted".
+    return;
+  }
   Object.assign(tableSavedViewState, { loads: { loaded: false, records: [], error: "" }, invoices: { loaded: false, records: [], error: "" } });
 
   const publicTrackingToken = publicTrackingTokenFromHash();
@@ -675,6 +711,29 @@ async function setAuthView(session) {
     applyRoleAwareShell();
     renderPublicTracking(publicTrackingToken);
     return;
+  }
+
+  if (session) {
+    let mfaStatus = null;
+    try {
+      mfaStatus = await getAuthenticatorAssuranceLevel();
+    } catch {
+      mfaStatus = null;
+    }
+    if (requestId !== authViewRequest) return;
+    if (mfaStatus && mfaChallengeRequired(mfaStatus)) {
+      authScreen.hidden = true;
+      appShell.hidden = true;
+      appShell.dataset.accessReady = "false";
+      setPublicShellMode(false);
+      const waitingForChallenge = await startMfaChallenge();
+      if (requestId !== authViewRequest) return;
+      if (waitingForChallenge) return;
+    } else {
+      mfaChallengeScreen.hidden = true;
+    }
+  } else {
+    mfaChallengeScreen.hidden = true;
   }
 
   authScreen.hidden = Boolean(session);
@@ -715,6 +774,156 @@ async function setAuthView(session) {
     accessLoadError = "";
     appShell.dataset.accessReady = "false";
   }
+}
+
+async function startMfaChallenge() {
+  mfaChallengeMessage.textContent = "";
+  mfaChallengeForm.reset();
+  mfaChallengeScreen.hidden = false;
+  try {
+    const factors = await listMfaFactors();
+    const factor = factors.find((item) => item.factor_type === "totp" && item.status === "verified");
+    if (!factor) {
+      mfaChallengeScreen.hidden = true;
+      mfaChallengeState = null;
+      return false;
+    }
+    const challenge = await challengeMfaFactor(factor.id);
+    mfaChallengeState = { factorId: factor.id, challengeId: challenge.id };
+    return true;
+  } catch (error) {
+    mfaChallengeState = null;
+    mfaChallengeMessage.textContent = error.message;
+    return true;
+  }
+}
+
+async function handleMfaChallengeSubmit(event) {
+  event.preventDefault();
+  if (!mfaChallengeState) return;
+  const code = new FormData(mfaChallengeForm).get("code");
+  mfaChallengeMessage.textContent = "Verifying...";
+  try {
+    await verifyMfaFactor(mfaChallengeState.factorId, mfaChallengeState.challengeId, code);
+    mfaChallengeState = null;
+    mfaChallengeScreen.hidden = true;
+    await setAuthView(currentSession);
+  } catch (error) {
+    mfaChallengeMessage.textContent = error.message;
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return null;
+  try {
+    const registration = await navigator.serviceWorker.register("sw.js");
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data?.type === "cyrra-push-navigate" && event.data.actionUrl) {
+        window.location.hash = event.data.actionUrl.startsWith("#") ? event.data.actionUrl.slice(1) : event.data.actionUrl;
+      }
+    });
+    return registration;
+  } catch {
+    return null;
+  }
+}
+
+async function getPushSubscriptionStatus() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !appConfig.vapidPublicKey) {
+    return { supported: false, subscribed: false };
+  }
+  const registration = await navigator.serviceWorker.ready.catch(() => null);
+  if (!registration) return { supported: false, subscribed: false };
+  const subscription = await registration.pushManager.getSubscription();
+  return { supported: true, subscribed: Boolean(subscription) };
+}
+
+async function enablePushNotifications() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    throw new Error("Push notifications are not supported in this browser.");
+  }
+  if (!appConfig.vapidPublicKey) {
+    throw new Error("Push notifications are not configured for this environment.");
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    throw new Error("Notification permission was not granted.");
+  }
+  const registration = await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(appConfig.vapidPublicKey),
+    });
+  }
+  const subscriptionJson = subscription.toJSON();
+  await upsertPushSubscription({
+    endpoint: subscriptionJson.endpoint,
+    p256dh_key: subscriptionJson.keys.p256dh,
+    auth_key: subscriptionJson.keys.auth,
+    user_agent: navigator.userAgent.slice(0, 300),
+  });
+  return subscription;
+}
+
+async function disablePushNotifications() {
+  if (!("serviceWorker" in navigator)) return;
+  const registration = await navigator.serviceWorker.ready.catch(() => null);
+  if (!registration) return;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) return;
+  const endpoint = subscription.endpoint;
+  await subscription.unsubscribe();
+  await deletePushSubscription(endpoint);
+}
+
+function renderPushNotificationPanel(status) {
+  if (!status.supported) {
+    return `
+      <article class="panel push-notification-panel">
+        <div class="panel-header"><div><h2>Push Notifications</h2><p>Not available in this browser or environment.</p></div></div>
+      </article>`;
+  }
+  return `
+    <article class="panel push-notification-panel">
+      <div class="panel-header">
+        <div><h2>Push Notifications</h2><p>Get a browser notification on this device for events enabled below.</p></div>
+        <button id="push-toggle-button" type="button">${status.subscribed ? "Disable on this device" : "Enable on this device"}</button>
+      </div>
+      <p id="push-notification-message" class="form-message"></p>
+    </article>`;
+}
+
+function bindPushNotificationPanel() {
+  const button = document.querySelector("#push-toggle-button");
+  if (!button) return;
+  const message = document.querySelector("#push-notification-message");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      if (button.textContent.includes("Enable")) {
+        await enablePushNotifications();
+        message.textContent = "Push notifications enabled on this device.";
+      } else {
+        await disablePushNotifications();
+        message.textContent = "Push notifications disabled on this device.";
+      }
+      await renderNotifications();
+    } catch (error) {
+      message.textContent = error.message;
+      button.disabled = false;
+    }
+  });
 }
 
 function can(permission) {
@@ -1011,6 +1220,11 @@ function renderRoute() {
 
   if (activeRoute === "settings") {
     renderSettings();
+    return;
+  }
+
+  if (activeRoute === "security") {
+    renderSecurityCenter();
     return;
   }
 
@@ -2218,13 +2432,23 @@ function businessProfileField(label, value) {
   return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value === null || value === undefined || value === "" ? "-" : String(value))}</strong></div>`;
 }
 
+function paySetupLabel(record = {}) {
+  if (!record.pay_type) return "Not set";
+  if (record.pay_type === "combined") {
+    const components = record.pay_components || {};
+    return `Combined · ${formatMoney(components.flat_amount)} + ${formatMoney(components.per_mile_rate)}/mi + ${numberOrZero(components.percentage_rate)}%`;
+  }
+  const suffix = record.pay_type === "per_mile" ? "/mi" : record.pay_type === "percentage" ? "%" : "";
+  return `${formatStatus(record.pay_type)} · ${record.pay_type === "percentage" ? numberOrZero(record.pay_rate) : formatMoney(record.pay_rate)}${suffix}`;
+}
+
 function businessProfileSummary(type, record) {
   if (type === "driver") return [
     ["Status", formatStatus(record.status)], ["Phone", record.phone], ["Email", record.email], ["Address", record.address],
     ["Hire date", formatDate(record.hire_date)], ["CDL", record.cdl_no], ["CDL expiry", formatDate(record.cdl_expiry)],
     ["Medical expiry", formatDate(record.medical_expiry)], ["Emergency contact", record.emergency_contact_name],
     ["Emergency phone", record.emergency_contact_phone], ["Relation", record.emergency_contact_relation],
-    ["Pay setup", record.pay_type ? `${formatStatus(record.pay_type)} · ${formatMoney(record.pay_rate)}` : "Not set"],
+    ["Pay setup", paySetupLabel(record)],
   ];
   if (type === "customer") return [
     ["Status", formatStatus(record.status)], ["Credit", formatStatus(record.credit_status)], ["Billing address", record.billing_address],
@@ -2236,7 +2460,7 @@ function businessProfileSummary(type, record) {
     ["Status", formatStatus(record.status)], ["MC", record.mc], ["DOT", record.dot], ["Safety rating", record.safety_rating],
     ["Insurance expiry", formatDate(record.insurance_expiry)], ["Contact", record.contact_name], ["Email", record.contact_email],
     ["Phone", record.contact_phone], ["W-9", formatStatus(record.w9_status)], ["Payment terms", `${record.payment_terms_days ?? 30} days`],
-    ["Pay setup", record.pay_type ? `${formatStatus(record.pay_type)} · ${formatMoney(record.pay_rate)}` : "Not set"], ["Notes", record.notes],
+    ["Pay setup", paySetupLabel(record)], ["Notes", record.notes],
   ];
   if (type === "truck") return [
     ["Status", formatStatus(record.status)], ["VIN", record.vin], ["Plate", record.plate], ["Make / Model", [record.make, record.model].filter(Boolean).join(" ")],
@@ -2357,8 +2581,11 @@ function renderCarriers() {
           <label><span>Contact phone</span><input name="contact_phone" type="tel" /></label>
           <label><span>Payment terms (days)</span><input name="payment_terms_days" type="number" min="0" max="365" value="30" /></label>
           <label><span>W-9 status</span><select name="w9_status"><option value="missing">Missing</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></label>
-          <label><span>Pay type</span><select name="pay_type"><option value="">Not set</option><option value="flat">Flat</option><option value="per_mile">Per mile</option><option value="percentage">Percentage</option></select></label>
+          <label><span>Pay type</span><select name="pay_type"><option value="">Financials fallback</option><option value="flat">Flat</option><option value="per_mile">Per mile</option><option value="percentage">Percentage</option><option value="combined">Combined</option></select></label>
           <label><span>Pay rate</span><input name="pay_rate" type="number" min="0" step="0.01" /></label>
+          <label><span>Combined flat</span><input name="pay_flat_amount" type="number" min="0" step="0.01" /></label>
+          <label><span>Combined per-mile</span><input name="pay_per_mile_rate" type="number" min="0" step="0.0001" /></label>
+          <label><span>Combined percentage</span><input name="pay_percentage_rate" type="number" min="0" step="0.01" /></label>
           <label><span>Notes</span><textarea name="notes" rows="3"></textarea></label>
           <label>
             <span>Status</span>
@@ -2447,6 +2674,9 @@ function fillCarrierForm(carrier) {
   form.elements.payment_terms_days.value = carrier.payment_terms_days ?? 30;
   form.elements.w9_status.value = carrier.w9_status || "missing";
   form.elements.pay_rate.value = carrier.pay_rate ?? "";
+  form.elements.pay_flat_amount.value = carrier.pay_components?.flat_amount ?? "";
+  form.elements.pay_per_mile_rate.value = carrier.pay_components?.per_mile_rate ?? "";
+  form.elements.pay_percentage_rate.value = carrier.pay_components?.percentage_rate ?? "";
   form.elements.status.value = carrier.status || "active";
   document.querySelector("#carrier-form-title").textContent = "Edit Carrier";
   document.querySelector("#carrier-submit").textContent = "Update Carrier";
@@ -2490,6 +2720,7 @@ async function handleCreateCarrier(event) {
       w9_status: formData.get("w9_status"),
       pay_type: formData.get("pay_type") || null,
       pay_rate: numberOrNull(formData.get("pay_rate")),
+      pay_components: { flat_amount: numberOrZero(formData.get("pay_flat_amount")), per_mile_rate: numberOrZero(formData.get("pay_per_mile_rate")), percentage_rate: numberOrZero(formData.get("pay_percentage_rate")) },
       notes: formData.get("notes") || null,
       status: formData.get("status"),
     };
@@ -2573,8 +2804,11 @@ function renderDrivers() {
               <option value="inactive">Inactive</option>
             </select>
           </label>
-          <label><span>Pay type</span><select name="pay_type"><option value="">Not set</option><option value="per_mile">Per mile</option><option value="percentage">Percentage</option><option value="hourly">Hourly</option><option value="salary">Salary</option><option value="per_load">Per load</option></select></label>
+          <label><span>Pay type</span><select name="pay_type"><option value="">Financials fallback</option><option value="per_mile">Per mile</option><option value="percentage">Percentage</option><option value="per_load">Per load</option><option value="combined">Combined</option><option value="hourly">Hourly (financials)</option><option value="salary">Salary (financials)</option></select></label>
           <label><span>Pay rate</span><input name="pay_rate" type="number" min="0" step="0.01" /></label>
+          <label><span>Combined flat</span><input name="pay_flat_amount" type="number" min="0" step="0.01" /></label>
+          <label><span>Combined per-mile</span><input name="pay_per_mile_rate" type="number" min="0" step="0.0001" /></label>
+          <label><span>Combined percentage</span><input name="pay_percentage_rate" type="number" min="0" step="0.01" /></label>
           ${can("manage_users") ? `
             <section class="driver-credential-box" data-driver-credential-box>
               <label class="checkbox-row">
@@ -2674,6 +2908,9 @@ function fillDriverForm(driver) {
   form.elements.email.value = driver.email || "";
   for (const field of ["address", "hire_date", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relation", "pay_type"]) form.elements[field].value = driver[field] || "";
   form.elements.pay_rate.value = driver.pay_rate ?? "";
+  form.elements.pay_flat_amount.value = driver.pay_components?.flat_amount ?? "";
+  form.elements.pay_per_mile_rate.value = driver.pay_components?.per_mile_rate ?? "";
+  form.elements.pay_percentage_rate.value = driver.pay_components?.percentage_rate ?? "";
   form.elements.cdl_no.value = driver.cdl_no || "";
   form.elements.cdl_expiry.value = driver.cdl_expiry || "";
   form.elements.medical_expiry.value = driver.medical_expiry || "";
@@ -2764,6 +3001,7 @@ async function handleCreateDriver(event) {
       medical_expiry: formData.get("medical_expiry") || null,
       pay_type: formData.get("pay_type") || null,
       pay_rate: numberOrNull(formData.get("pay_rate")),
+      pay_components: { flat_amount: numberOrZero(formData.get("pay_flat_amount")), per_mile_rate: numberOrZero(formData.get("pay_per_mile_rate")), percentage_rate: numberOrZero(formData.get("pay_percentage_rate")) },
       status: formData.get("status"),
     };
     validateProfileFinancialTerms({ payRate: payload.pay_rate });
@@ -5975,6 +6213,10 @@ function csvCell(value) {
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
+function exportFileToken(value, fallback = "export") {
+  return String(value || fallback).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || fallback;
+}
+
 async function loadInvoices() {
   const table = document.querySelector("#invoices-table");
   const pagination = document.querySelector("#invoices-pagination");
@@ -6516,6 +6758,38 @@ function renderSettlements() {
         </form>
       </article>
     </dialog>
+    <dialog id="settlement-adjustment-dialog" class="crud-dialog settlement-adjustment-dialog">
+      <article class="panel">
+        <div class="panel-header"><div><h2>Settlement Adjustments</h2><p id="settlement-adjustment-subtitle">Add deductions, reimbursements and corrections before approval.</p></div><button id="close-settlement-adjustment-dialog" class="dialog-close" type="button">×</button></div>
+        <section id="settlement-adjustment-summary" class="settlement-adjustment-summary"></section>
+        <section id="settlement-adjustment-list" class="settlement-adjustment-list"></section>
+        <form id="settlement-adjustment-form" class="record-form">
+          <input type="hidden" name="id">
+          <input type="hidden" name="settlement_id">
+          <label><span>Type</span><select name="adjustment_type"><option value="reimbursement">Reimbursement</option><option value="deduction">Deduction</option><option value="correction">Correction</option></select></label>
+          <label><span>Direction</span><select name="direction"><option value="add">Add</option><option value="subtract">Subtract</option></select></label>
+          <label><span>Amount</span><input name="amount" type="number" min="0.01" step="0.01" required></label>
+          <label class="company-payment-field"><span>Description</span><input name="description" placeholder="Fuel advance, detention reimbursement..." required></label>
+          <div class="form-actions"><button type="button" id="reset-settlement-adjustment-form">New Adjustment</button><button type="submit">Save Adjustment</button></div>
+          <p id="settlement-adjustment-message" class="form-message"></p>
+        </form>
+      </article>
+    </dialog>
+    <dialog id="settlement-correction-dialog" class="crud-dialog settlement-adjustment-dialog">
+      <article class="panel">
+        <div class="panel-header"><div><h2>Post-Batch Correction</h2><p id="settlement-correction-subtitle">Create a controlled correction without changing the original statement.</p></div><button id="close-settlement-correction-dialog" class="dialog-close" type="button">×</button></div>
+        <section id="settlement-correction-summary" class="settlement-adjustment-summary"></section>
+        <form id="settlement-correction-form" class="record-form">
+          <input type="hidden" name="original_settlement_id">
+          <label><span>Direction</span><select name="direction"><option value="add">Add payable correction</option><option value="subtract">Deduct from Draft settlement</option></select></label>
+          <label><span>Target Draft settlement</span><select name="target_settlement_id"></select></label>
+          <label><span>Amount</span><input name="amount" type="number" min="0.01" step="0.01" required></label>
+          <label class="company-payment-field"><span>Reason</span><input name="reason" placeholder="Rate correction, overpayment recovery..." required></label>
+          <div class="form-actions"><button type="submit">Create Correction</button></div>
+          <p id="settlement-correction-message" class="form-message"></p>
+        </form>
+      </article>
+    </dialog>
     <section id="settlements-root" class="settlements-root"><div class="empty-state">Loading settlements...</div></section>
   `;
   document.querySelector("#close-settlement-dialog").addEventListener("click", () => document.querySelector("#settlement-dialog").close());
@@ -6523,11 +6797,20 @@ function renderSettlements() {
   document.querySelector("#close-settlement-pay-batch-dialog").addEventListener("click", () => document.querySelector("#settlement-pay-batch-dialog").close());
   document.querySelector("#settlement-pay-batch-form").addEventListener("submit", handleCreateSettlementPayBatch);
   document.querySelector("#settlement-pay-batch-payee").addEventListener("change", renderSettlementPayBatchCandidateList);
+  document.querySelector("#close-settlement-adjustment-dialog").addEventListener("click", () => document.querySelector("#settlement-adjustment-dialog").close());
+  document.querySelector("#settlement-adjustment-form").addEventListener("submit", handleSaveSettlementAdjustment);
+  document.querySelector("#settlement-adjustment-form select[name='adjustment_type']").addEventListener("change", handleSettlementAdjustmentTypeChange);
+  document.querySelector("#reset-settlement-adjustment-form").addEventListener("click", resetSettlementAdjustmentForm);
+  document.querySelector("#close-settlement-correction-dialog").addEventListener("click", () => document.querySelector("#settlement-correction-dialog").close());
+  document.querySelector("#settlement-correction-form").addEventListener("submit", handleCreateSettlementCorrection);
+  document.querySelector("#settlement-correction-form select[name='direction']").addEventListener("change", renderSettlementCorrectionTargets);
   loadSettlementsPage();
 }
 
 let settlementCandidateCache = [];
-let settlementPayBatchState = { settlements: [], batches: [], candidates: [] };
+let settlementPayBatchState = { settlements: [], batches: [], candidates: [], corrections: [] };
+let activeSettlementAdjustmentId = null;
+let activeSettlementCorrectionId = null;
 const settlementListState = { search: "", type: "", status: "", sortBy: "created_at", direction: "desc", page: 1, pageSize: 5 };
 const settlementBatchListState = { search: "", status: "", sortBy: "created_at", direction: "desc", page: 1, pageSize: 5 };
 let settlementFilterTimer = null;
@@ -6535,9 +6818,9 @@ let settlementFilterTimer = null;
 async function loadSettlementsPage() {
   const root = document.querySelector("#settlements-root");
   try {
-    const [loads, settlements, payBatches] = await Promise.all([listSettlementCandidates(), listSettlements(), listSettlementPayBatches()]);
+    const [loads, settlements, payBatches, corrections] = await Promise.all([listSettlementCandidates(), listSettlements(), listSettlementPayBatches(), listSettlementPostBatchCorrections()]);
     settlementCandidateCache = buildSettlementCandidates(loads);
-    settlementPayBatchState = { settlements, batches: payBatches, candidates: settlementPayBatchCandidates(settlements, payBatches) };
+    settlementPayBatchState = { settlements, batches: payBatches, corrections, candidates: settlementPayBatchCandidates(settlements, payBatches) };
     renderSettlementWorkspace();
   } catch (error) {
     root.innerHTML = `<div class="empty-state">Settlements are not ready: ${escapeHtml(error.message)}</div>`;
@@ -6546,6 +6829,21 @@ async function loadSettlementsPage() {
 
 function settlementPayeeName(record) {
   return record.payee_type === "carrier" ? record.carriers?.name : record.drivers?.name || "-";
+}
+
+function batchedSettlementIds() {
+  return new Set(settlementPayBatchState.batches.flatMap((batch) => (batch.settlement_pay_batch_items || []).map((item) => item.settlement_id)));
+}
+
+function isSettlementBatched(settlement) {
+  return batchedSettlementIds().has(settlement.id);
+}
+
+function sameSettlementPayee(left, right) {
+  return left?.branch_id === right?.branch_id
+    && left?.payee_type === right?.payee_type
+    && (left?.carrier_id || "") === (right?.carrier_id || "")
+    && (left?.driver_id || "") === (right?.driver_id || "");
 }
 
 function filteredSettlementRecords(records, state, isBatch = false) {
@@ -6587,7 +6885,7 @@ function renderSettlementPagination(type, total, pageCount, start, shown) {
 
 function renderSettlementWorkspace() {
   const root = document.querySelector("#settlements-root");
-  const { settlements, batches: payBatches } = settlementPayBatchState;
+  const { settlements, batches: payBatches, corrections } = settlementPayBatchState;
   const filteredSettlements = filteredSettlementRecords(settlements, settlementListState);
   const filteredBatches = filteredSettlementRecords(payBatches, settlementBatchListState, true);
   const settlementPage = pagedSettlementRecords(filteredSettlements, settlementListState);
@@ -6606,17 +6904,23 @@ function renderSettlementWorkspace() {
       <section class="panel">
         <div class="panel-header">
           <div><h2>Settlement List</h2><p>Carrier and driver pay statements connected to completed loads.</p></div>
-          <div class="table-tools"><button id="reload-settlements" type="button">Refresh</button><button id="open-settlement-dialog" class="primary-button" type="button" ${settlementCandidateCache.length ? "" : `disabled title="No eligible completed load costs"`}>Create Settlement</button></div>
+          <div class="table-tools"><button id="export-settlements-csv" type="button" ${filteredSettlements.length ? "" : "disabled"}>Export CSV</button><button id="reload-settlements" type="button">Refresh</button><button id="open-settlement-dialog" class="primary-button" type="button" ${settlementCandidateCache.length ? "" : `disabled title="No eligible completed load costs"`}>Create Settlement</button></div>
         </div>
         ${settlementCandidateCache.length ? "" : '<p class="panel-action-help">Create Settlement becomes available when a delivered load has an unprocessed carrier or driver cost.</p>'}
         ${renderSettlementListControls("settlements")}
         <div class="data-table">${renderSettlementRows(settlementPage.pageRecords)}</div>
         ${renderSettlementPagination("settlements", filteredSettlements.length, settlementPage.pageCount, settlementPage.start, settlementPage.pageRecords.length)}
       </section>
+      <section class="panel settlement-corrections-panel">
+        <div class="panel-header">
+          <div><h2>Post-Batch Corrections</h2><p>Applied correction ledger for batched statements.</p></div>
+        </div>
+        <div class="data-table">${renderSettlementCorrectionRows(corrections, settlements)}</div>
+      </section>
       <section class="panel settlement-pay-batches-panel">
         <div class="panel-header">
           <div><h2>Pay Batches</h2><p>Group carrier or driver settlements into pay period statements.</p></div>
-          <div class="table-tools"><button id="reload-pay-batches" type="button">Refresh</button><button id="open-settlement-pay-batch-dialog" class="primary-button" type="button" ${settlementPayBatchState.candidates.length ? "" : `disabled title="No Draft or Approved settlements are available"`}>Create Pay Batch</button></div>
+          <div class="table-tools"><button id="export-pay-batches-csv" type="button" ${filteredBatches.length ? "" : "disabled"}>Export CSV</button><button id="reload-pay-batches" type="button">Refresh</button><button id="open-settlement-pay-batch-dialog" class="primary-button" type="button" ${settlementPayBatchState.candidates.length ? "" : `disabled title="No Draft or Approved settlements are available"`}>Create Pay Batch</button></div>
         </div>
         ${settlementPayBatchState.candidates.length ? "" : '<p class="panel-action-help">Create Pay Batch becomes available when a Draft or Approved settlement is not already in a batch.</p>'}
         ${renderSettlementListControls("batches")}
@@ -6624,6 +6928,7 @@ function renderSettlementWorkspace() {
         ${renderSettlementPagination("batches", filteredBatches.length, batchPage.pageCount, batchPage.start, batchPage.pageRecords.length)}
       </section>
     `;
+    document.querySelector("#export-settlements-csv").addEventListener("click", () => exportSettlementSummaryCsv(filteredSettlements));
     document.querySelector("#reload-settlements").addEventListener("click", loadSettlementsPage);
     document.querySelector("#open-settlement-dialog").addEventListener("click", openSettlementDialog);
     root.querySelectorAll("[data-settlement-status]").forEach((select) => select.addEventListener("change", handleSettlementStatusChange));
@@ -6631,6 +6936,19 @@ function renderSettlementWorkspace() {
       const settlement = settlements.find((item) => item.id === button.dataset.previewSettlement);
       renderSettlementPreview(settlement);
     }));
+    root.querySelectorAll("[data-export-settlement]").forEach((button) => button.addEventListener("click", () => {
+      const settlement = settlements.find((item) => item.id === button.dataset.exportSettlement);
+      exportSettlementDetailCsv(settlement);
+    }));
+    root.querySelectorAll("[data-adjust-settlement]").forEach((button) => button.addEventListener("click", () => {
+      const settlement = settlements.find((item) => item.id === button.dataset.adjustSettlement);
+      openSettlementAdjustmentDialog(settlement);
+    }));
+    root.querySelectorAll("[data-correct-settlement]").forEach((button) => button.addEventListener("click", () => {
+      const settlement = settlements.find((item) => item.id === button.dataset.correctSettlement);
+      openSettlementCorrectionDialog(settlement);
+    }));
+    document.querySelector("#export-pay-batches-csv").addEventListener("click", () => exportSettlementPayBatchSummaryCsv(filteredBatches));
     document.querySelector("#reload-pay-batches").addEventListener("click", loadSettlementsPage);
     document.querySelector("#open-settlement-pay-batch-dialog").addEventListener("click", openSettlementPayBatchDialog);
     root.querySelectorAll("[data-pay-batch-status]").forEach((select) => select.addEventListener("change", handleSettlementPayBatchStatusChange));
@@ -6638,7 +6956,31 @@ function renderSettlementWorkspace() {
       const batch = payBatches.find((item) => item.id === button.dataset.previewPayBatch);
       renderSettlementPayBatchPreview(batch);
     }));
+    root.querySelectorAll("[data-export-pay-batch]").forEach((button) => button.addEventListener("click", () => {
+      const batch = payBatches.find((item) => item.id === button.dataset.exportPayBatch);
+      exportSettlementPayBatchDetailCsv(batch);
+    }));
     bindSettlementListControls();
+}
+
+function exportSettlementSummaryCsv(settlements) {
+  if (!settlements.length) return;
+  downloadCsv(`cyrra-settlements-${localDateIso()}.csv`, settlementStatementSummaryRows(settlements));
+}
+
+function exportSettlementPayBatchSummaryCsv(batches) {
+  if (!batches.length) return;
+  downloadCsv(`cyrra-pay-batches-${localDateIso()}.csv`, settlementPayBatchSummaryRows(batches));
+}
+
+function exportSettlementDetailCsv(settlement) {
+  if (!settlement) return;
+  downloadCsv(`cyrra-settlement-${exportFileToken(settlement.settlement_no)}.csv`, settlementStatementDetailRows(settlement));
+}
+
+function exportSettlementPayBatchDetailCsv(batch) {
+  if (!batch) return;
+  downloadCsv(`cyrra-pay-batch-${exportFileToken(batch.batch_no)}.csv`, settlementPayBatchDetailRows(batch));
 }
 
 function bindSettlementListControls() {
@@ -6668,11 +7010,19 @@ function buildSettlementCandidates(loads) {
     const financials = Array.isArray(load.load_financials) ? load.load_financials[0] : load.load_financials;
     const activeItems = (load.settlement_items || []).filter((item) => item.active);
     const candidates = [];
-    if (load.carrier_id && numberOrZero(financials?.carrier_cost) > 0 && !activeItems.some((item) => item.payee_type === "carrier")) {
-      candidates.push({ load, payeeType: "carrier", payee: load.carriers?.name || "Carrier", amount: numberOrZero(financials.carrier_cost) });
+    if (load.carrier_id && !activeItems.some((item) => item.payee_type === "carrier")) {
+      const profile = load.carriers || {};
+      try {
+        const calculation = calculateSettlementPay({ pay_type: profile.pay_type || "financials", pay_rate: profile.pay_rate, pay_components: profile.pay_components, loaded_miles: load.loaded_miles, revenue: numberOrZero(financials?.linehaul) + numberOrZero(financials?.fsc) + numberOrZero(financials?.accessorials), fallback_amount: financials?.carrier_cost });
+        candidates.push({ load, payeeType: "carrier", payee: profile.name || "Carrier", amount: calculation.amount, calculation });
+      } catch { /* Invalid or incomplete pay setup is not settlement-eligible. */ }
     }
-    if (load.driver_id && numberOrZero(financials?.driver_pay) > 0 && !activeItems.some((item) => item.payee_type === "driver")) {
-      candidates.push({ load, payeeType: "driver", payee: load.drivers?.name || "Driver", amount: numberOrZero(financials.driver_pay) });
+    if (load.driver_id && !activeItems.some((item) => item.payee_type === "driver")) {
+      const profile = load.drivers || {};
+      try {
+        const calculation = calculateSettlementPay({ pay_type: profile.pay_type || "financials", pay_rate: profile.pay_rate, pay_components: profile.pay_components, loaded_miles: load.loaded_miles, revenue: numberOrZero(financials?.linehaul) + numberOrZero(financials?.fsc) + numberOrZero(financials?.accessorials), fallback_amount: financials?.driver_pay });
+        candidates.push({ load, payeeType: "driver", payee: profile.name || "Driver", amount: calculation.amount, calculation });
+      } catch { /* Invalid or incomplete pay setup is not settlement-eligible. */ }
     }
     return candidates;
   });
@@ -6693,7 +7043,7 @@ function renderSettlementCandidateSummary() {
   const index = Number(document.querySelector("#settlement-candidate").value || 0);
   const candidate = settlementCandidateCache[index];
   document.querySelector("#settlement-candidate-summary").innerHTML = candidate ? `
-    <span>${escapeHtml(routeLabel(candidate.load))}</span><strong>${formatMoney(candidate.amount)}</strong><small>${formatStatus(candidate.payeeType)} pay to ${escapeHtml(candidate.payee)}</small>
+    <span>${escapeHtml(routeLabel(candidate.load))}</span><strong>${formatMoney(candidate.amount)}</strong><small>${formatStatus(candidate.payeeType)} pay to ${escapeHtml(candidate.payee)} · ${formatStatus(candidate.calculation.model)} model</small>
   ` : '<span>No eligible costs.</span>';
 }
 
@@ -6718,20 +7068,47 @@ async function handleCreateSettlement(event) {
 }
 
 function renderSettlementRows(settlements) {
+  const batchedIds = batchedSettlementIds();
   if (!settlements.length) return '<div class="empty-state">No matching settlements.</div>';
   return `
     <div class="data-row settlement-row data-row-head"><span>Settlement</span><span>Payee</span><span>Type</span><span>Date</span><span>Amount</span><span>Status</span><span>Actions</span></div>
-    ${settlements.map((settlement) => `
-      <div class="data-row settlement-row">
+    ${settlements.map((settlement) => {
+      const isBatched = batchedIds.has(settlement.id);
+      const actions = [
+        `<button type="button" data-preview-settlement="${settlement.id}">Preview</button>`,
+        isBatched && settlement.status !== "void" ? `<button type="button" data-correct-settlement="${settlement.id}">Correct</button>` : "",
+        `<button type="button" data-export-settlement="${settlement.id}">Export</button>`,
+        settlement.status === "draft" ? `<button type="button" data-adjust-settlement="${settlement.id}">Adjust</button>` : "",
+      ].filter(Boolean).join("");
+      return `<div class="data-row settlement-row">
         <strong>${escapeHtml(settlement.settlement_no)}</strong>
         <span>${escapeHtml(settlement.payee_type === "carrier" ? settlement.carriers?.name : settlement.drivers?.name || "-")}</span>
         <span>${formatStatus(settlement.payee_type)}</span>
         <span>${formatDate(settlement.settlement_date)}</span>
-        <strong>${formatMoney(settlement.total_amount)}</strong>
+        <strong>${formatMoney(settlement.total_amount)}${settlement.settlement_adjustments?.length ? `<small>${settlement.settlement_adjustments.length} adjustment${settlement.settlement_adjustments.length === 1 ? "" : "s"}</small>` : ""}</strong>
         <select class="workflow-status-select" data-state="${settlement.status}" data-settlement-status="${settlement.id}" aria-label="Change status for ${escapeAttribute(settlement.settlement_no)}" ${["paid", "void"].includes(settlement.status) ? "disabled" : ""}>${settlementStatusOptions(settlement.status).map((status) => `<option value="${status}">${formatStatus(status)}</option>`).join("")}</select>
-        <div class="settlement-actions"><button type="button" data-preview-settlement="${settlement.id}">Preview</button></div>
-      </div>
-    `).join("")}`;
+        <div class="settlement-actions">${actions}</div>
+      </div>`;
+    }).join("")}`;
+}
+
+function renderSettlementCorrectionRows(corrections, settlements) {
+  if (!corrections.length) return '<div class="empty-state compact-empty">No post-batch corrections yet.</div>';
+  const settlementById = new Map(settlements.map((settlement) => [settlement.id, settlement]));
+  return `
+    <div class="data-row settlement-correction-row data-row-head"><span>Original</span><span>Target</span><span>Direction</span><span>Amount</span><span>Reason</span></div>
+    ${corrections.slice(0, 8).map((correction) => {
+      const original = settlementById.get(correction.original_settlement_id);
+      const target = settlementById.get(correction.target_settlement_id);
+      return `<div class="data-row settlement-correction-row">
+        <strong>${escapeHtml(original?.settlement_no || correction.original_settlement_id || "-")}</strong>
+        <span>${escapeHtml(target?.settlement_no || correction.target_settlement_id || "-")}</span>
+        <span>${formatStatus(correction.direction)}</span>
+        <strong>${formatMoney(correction.direction === "subtract" ? -numberOrZero(correction.amount) : correction.amount)}</strong>
+        <span>${escapeHtml(correction.reason)}</span>
+      </div>`;
+    }).join("")}
+  `;
 }
 
 function renderSettlementPayBatchRows(batches) {
@@ -6746,7 +7123,7 @@ function renderSettlementPayBatchRows(batches) {
         <span>${batch.settlement_count} settlement${batch.settlement_count === 1 ? "" : "s"}</span>
         <strong>${formatMoney(batch.total_amount)}</strong>
         <select class="workflow-status-select" data-state="${batch.status}" data-pay-batch-status="${batch.id}" aria-label="Change status for ${escapeAttribute(batch.batch_no)}" ${["paid", "void"].includes(batch.status) ? "disabled" : ""}>${settlementStatusOptions(batch.status).map((status) => `<option value="${status}">${formatStatus(status)}</option>`).join("")}</select>
-        <div class="settlement-actions"><button type="button" data-preview-pay-batch="${batch.id}">Preview</button></div>
+        <div class="settlement-actions"><button type="button" data-preview-pay-batch="${batch.id}">Preview</button><button type="button" data-export-pay-batch="${batch.id}">Export</button></div>
       </div>
     `).join("")}
   `;
@@ -6849,6 +7226,216 @@ async function handleSettlementPayBatchStatusChange(event) {
   }
 }
 
+function settlementAdjustmentImpact(adjustment) {
+  return (adjustment.direction === "subtract" ? -1 : 1) * numberOrZero(adjustment.amount);
+}
+
+function settlementBaseAmount(settlement) {
+  return numberOrZero(settlement.total_amount) - (settlement.settlement_adjustments || []).reduce((sum, adjustment) => sum + settlementAdjustmentImpact(adjustment), 0);
+}
+
+function settlementItemCalculationLabel(item = {}) {
+  const snapshot = item.calculation_snapshot || {};
+  const model = item.pay_model_snapshot || snapshot.model;
+  if (!model || model === "financials") return "Financials snapshot";
+  if (model === "combined") {
+    const components = snapshot.components || {};
+    return `Combined: ${formatMoney(components.flat_amount)} + ${numberOrZero(item.loaded_miles_snapshot)} mi × ${formatMoney(components.per_mile_rate)} + ${numberOrZero(components.percentage_rate)}% × ${formatMoney(item.revenue_snapshot)}`;
+  }
+  if (model === "per_mile") return `Per mile: ${numberOrZero(item.loaded_miles_snapshot)} mi × ${formatMoney(item.pay_rate_snapshot)}`;
+  if (model === "percentage") return `Percentage: ${numberOrZero(item.pay_rate_snapshot)}% × ${formatMoney(item.revenue_snapshot)}`;
+  return `${formatStatus(model)}: ${formatMoney(item.pay_rate_snapshot)}`;
+}
+
+function activeSettlementAdjustment() {
+  return settlementPayBatchState.settlements.find((settlement) => settlement.id === activeSettlementAdjustmentId);
+}
+
+function openSettlementAdjustmentDialog(settlement) {
+  if (!settlement) return;
+  activeSettlementAdjustmentId = settlement.id;
+  document.querySelector("#settlement-adjustment-dialog").showModal();
+  renderSettlementAdjustmentDialog();
+}
+
+function renderSettlementAdjustmentDialog() {
+  const settlement = activeSettlementAdjustment();
+  const summary = document.querySelector("#settlement-adjustment-summary");
+  const list = document.querySelector("#settlement-adjustment-list");
+  const subtitle = document.querySelector("#settlement-adjustment-subtitle");
+  if (!settlement) {
+    summary.innerHTML = "";
+    list.innerHTML = '<div class="empty-state compact-empty">Settlement is not available.</div>';
+    return;
+  }
+  const payee = settlement.payee_type === "carrier" ? settlement.carriers?.name : settlement.drivers?.name || "-";
+  const baseAmount = settlementBaseAmount(settlement);
+  const adjustments = settlement.settlement_adjustments || [];
+  subtitle.textContent = `${settlement.settlement_no} · ${payee}`;
+  summary.innerHTML = `
+    <div><span>Base amount</span><strong>${formatMoney(baseAmount)}</strong></div>
+    <div><span>Adjustments</span><strong>${formatMoney(adjustments.reduce((sum, adjustment) => sum + settlementAdjustmentImpact(adjustment), 0))}</strong></div>
+    <div><span>Total settlement</span><strong>${formatMoney(settlement.total_amount)}</strong></div>
+  `;
+  list.innerHTML = adjustments.length ? `
+    <div class="data-row settlement-adjustment-row data-row-head"><span>Type</span><span>Description</span><span>Impact</span><span>Actions</span></div>
+    ${adjustments.map((adjustment) => `
+      <div class="data-row settlement-adjustment-row">
+        <span>${formatStatus(adjustment.adjustment_type)}</span>
+        <span>${escapeHtml(adjustment.description)}</span>
+        <strong>${formatMoney(settlementAdjustmentImpact(adjustment))}</strong>
+        <div class="settlement-actions"><button type="button" data-edit-settlement-adjustment="${adjustment.id}">Edit</button><button type="button" data-delete-settlement-adjustment="${adjustment.id}">Delete</button></div>
+      </div>
+    `).join("")}
+  ` : '<div class="empty-state compact-empty">No adjustments yet.</div>';
+  resetSettlementAdjustmentForm();
+  list.querySelectorAll("[data-edit-settlement-adjustment]").forEach((button) => button.addEventListener("click", () => editSettlementAdjustment(button.dataset.editSettlementAdjustment)));
+  list.querySelectorAll("[data-delete-settlement-adjustment]").forEach((button) => button.addEventListener("click", () => handleDeleteSettlementAdjustment(button.dataset.deleteSettlementAdjustment)));
+}
+
+function resetSettlementAdjustmentForm() {
+  const form = document.querySelector("#settlement-adjustment-form");
+  if (!form) return;
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.settlement_id.value = activeSettlementAdjustmentId || "";
+  form.elements.adjustment_type.value = "reimbursement";
+  form.elements.direction.value = "add";
+  document.querySelector("#settlement-adjustment-message").textContent = "";
+}
+
+function handleSettlementAdjustmentTypeChange(event) {
+  const form = document.querySelector("#settlement-adjustment-form");
+  if (!form) return;
+  if (event.currentTarget.value === "deduction") form.elements.direction.value = "subtract";
+  if (event.currentTarget.value === "reimbursement") form.elements.direction.value = "add";
+}
+
+function editSettlementAdjustment(adjustmentId) {
+  const settlement = activeSettlementAdjustment();
+  const adjustment = (settlement?.settlement_adjustments || []).find((item) => item.id === adjustmentId);
+  const form = document.querySelector("#settlement-adjustment-form");
+  if (!adjustment || !form) return;
+  form.elements.id.value = adjustment.id;
+  form.elements.settlement_id.value = settlement.id;
+  form.elements.adjustment_type.value = adjustment.adjustment_type;
+  form.elements.direction.value = adjustment.direction;
+  form.elements.amount.value = adjustment.amount;
+  form.elements.description.value = adjustment.description;
+  document.querySelector("#settlement-adjustment-message").textContent = "";
+}
+
+function correctionTargetCandidates(original) {
+  const batchedIds = batchedSettlementIds();
+  return settlementPayBatchState.settlements.filter((settlement) => settlement.status === "draft"
+    && settlement.id !== original?.id
+    && !batchedIds.has(settlement.id)
+    && sameSettlementPayee(settlement, original));
+}
+
+function openSettlementCorrectionDialog(settlement) {
+  if (!settlement || !isSettlementBatched(settlement)) return;
+  activeSettlementCorrectionId = settlement.id;
+  const form = document.querySelector("#settlement-correction-form");
+  form.reset();
+  form.elements.original_settlement_id.value = settlement.id;
+  form.elements.direction.value = "add";
+  document.querySelector("#settlement-correction-subtitle").textContent = `${settlement.settlement_no} · ${settlementPayeeName(settlement)}`;
+  document.querySelector("#settlement-correction-summary").innerHTML = `
+    <div><span>Original status</span><strong>${formatStatus(settlement.status)}</strong></div>
+    <div><span>Original total</span><strong>${formatMoney(settlement.total_amount)}</strong></div>
+    <div><span>Correction mode</span><strong>Immutable ledger</strong></div>
+  `;
+  document.querySelector("#settlement-correction-message").textContent = "";
+  renderSettlementCorrectionTargets();
+  document.querySelector("#settlement-correction-dialog").showModal();
+}
+
+function renderSettlementCorrectionTargets() {
+  const form = document.querySelector("#settlement-correction-form");
+  if (!form) return;
+  const original = settlementPayBatchState.settlements.find((settlement) => settlement.id === activeSettlementCorrectionId);
+  const select = form.elements.target_settlement_id;
+  const targets = correctionTargetCandidates(original);
+  if (form.elements.direction.value === "add") {
+    select.innerHTML = '<option value="">Create new Draft correction settlement</option>'
+      + targets.map((settlement) => `<option value="${settlement.id}">${escapeHtml(settlement.settlement_no)} · ${formatMoney(settlement.total_amount)}</option>`).join("");
+    select.required = false;
+  } else {
+    select.innerHTML = targets.length
+      ? targets.map((settlement) => `<option value="${settlement.id}">${escapeHtml(settlement.settlement_no)} · ${formatMoney(settlement.total_amount)}</option>`).join("")
+      : '<option value="">No eligible Draft target</option>';
+    select.required = true;
+  }
+}
+
+async function handleCreateSettlementCorrection(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = document.querySelector("#settlement-correction-message");
+  const button = form.querySelector("button[type='submit']");
+  try {
+    const payload = validateSettlementPostBatchCorrection({
+      original_settlement_id: form.elements.original_settlement_id.value,
+      target_settlement_id: form.elements.target_settlement_id.value || null,
+      direction: form.elements.direction.value,
+      amount: form.elements.amount.value,
+      reason: form.elements.reason.value,
+    });
+    button.disabled = true;
+    message.textContent = "Creating correction...";
+    await createSettlementPostBatchCorrection(payload);
+    document.querySelector("#settlement-correction-dialog").close();
+    await loadSettlementsPage();
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleSaveSettlementAdjustment(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = document.querySelector("#settlement-adjustment-message");
+  const button = form.querySelector("button[type='submit']");
+  try {
+    const payload = validateSettlementAdjustment({
+      id: form.elements.id.value || null,
+      settlement_id: form.elements.settlement_id.value || activeSettlementAdjustmentId,
+      adjustment_type: form.elements.adjustment_type.value,
+      direction: form.elements.direction.value,
+      amount: form.elements.amount.value,
+      description: form.elements.description.value,
+    });
+    button.disabled = true;
+    message.textContent = "Saving adjustment...";
+    await saveSettlementAdjustment(payload);
+    await loadSettlementsPage();
+    activeSettlementAdjustmentId = payload.settlement_id;
+    renderSettlementAdjustmentDialog();
+    message.textContent = "Adjustment saved.";
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleDeleteSettlementAdjustment(adjustmentId) {
+  if (!window.confirm("Delete this settlement adjustment?")) return;
+  const message = document.querySelector("#settlement-adjustment-message");
+  try {
+    message.textContent = "Deleting adjustment...";
+    await deleteSettlementAdjustment(adjustmentId);
+    await loadSettlementsPage();
+    renderSettlementAdjustmentDialog();
+    message.textContent = "Adjustment deleted.";
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
 async function renderSettlementPreview(settlement) {
   let dialog = document.querySelector("#settlement-preview-dialog");
   if (!dialog) {
@@ -6863,19 +7450,21 @@ async function renderSettlementPreview(settlement) {
     const company = await getCompanyBillingSettings();
     const payee = settlement.payee_type === "carrier" ? settlement.carriers?.name : settlement.drivers?.name;
     const items = settlement.settlement_items || [];
+    const adjustments = settlement.settlement_adjustments || [];
     dialog.innerHTML = `
-      <div class="invoice-preview-toolbar"><button type="button" data-close-settlement-preview>Close</button><button class="primary-button" type="button" data-print-settlement>Print / Save PDF</button></div>
+      <div class="invoice-preview-toolbar"><button type="button" data-close-settlement-preview>Close</button><button type="button" data-export-settlement-preview>Export CSV</button><button class="primary-button" type="button" data-print-settlement>Print / Save PDF</button></div>
       <article class="invoice-sheet settlement-sheet">
         <header class="invoice-brand-header">
           <div class="invoice-brand"><img src="assets/cyrra-logo.png" alt="Cyrra logo"><div><strong>${escapeHtml(company.legal_name)}</strong><span>${escapeHtml([company.address_line_1, company.address_line_2].filter(Boolean).join(", "))}</span><small>${escapeHtml([company.city, company.state, company.postal_code].filter(Boolean).join(", "))}</small></div></div>
           <div class="invoice-title"><h1>SETTLEMENT</h1><strong>#${escapeHtml(settlement.settlement_no)}</strong><span>${formatStatus(settlement.status)}</span></div>
         </header>
         <section class="invoice-meta-grid"><div><span>Pay To</span><strong>${escapeHtml(payee || "-")}</strong><p>${formatStatus(settlement.payee_type)}</p></div><div><span>Settlement Date</span><strong>${formatDate(settlement.settlement_date)}</strong><span>Status</span><strong>${formatStatus(settlement.status)}</strong></div></section>
-        <table class="invoice-lines"><thead><tr><th>Load / Route</th><th>Amount</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>Load ${escapeHtml(item.loads?.load_no || "-")}</strong><br><small>${escapeHtml(item.loads ? routeLabel(item.loads) : item.description || "-")}</small></td><td>${formatMoney(item.amount)}</td></tr>`).join("")}</tbody></table>
+        <table class="invoice-lines"><thead><tr><th>Load / Route</th><th>Amount</th></tr></thead><tbody>${items.map((item) => `<tr><td><strong>Load ${escapeHtml(item.loads?.load_no || "-")}</strong><br><small>${escapeHtml(item.loads ? routeLabel(item.loads) : item.description || "-")}</small><br><small>${escapeHtml(settlementItemCalculationLabel(item))}</small></td><td>${formatMoney(item.amount)}</td></tr>`).join("")}${adjustments.map((adjustment) => `<tr><td><strong>${escapeHtml(formatStatus(adjustment.adjustment_type))}</strong><br><small>${escapeHtml(adjustment.description)}</small></td><td>${formatMoney(settlementAdjustmentImpact(adjustment))}</td></tr>`).join("")}</tbody></table>
         <section class="invoice-total"><span>Total Settlement</span><strong>${formatMoney(settlement.total_amount)}</strong></section>
         <footer><p>${escapeHtml(settlement.notes || "Settlement for transportation services.")}</p><small>${escapeHtml(company.email || "")}${company.phone ? ` · ${escapeHtml(company.phone)}` : ""}</small></footer>
       </article>`;
     dialog.querySelector("[data-close-settlement-preview]").addEventListener("click", () => dialog.close());
+    dialog.querySelector("[data-export-settlement-preview]").addEventListener("click", () => exportSettlementDetailCsv(settlement));
     dialog.querySelector("[data-print-settlement]").addEventListener("click", () => { document.body.classList.add("invoice-printing"); window.print(); });
   } catch (error) {
     dialog.innerHTML = `<div class="empty-state">Settlement preview unavailable: ${escapeHtml(error.message)}</div><button type="button" data-close-settlement-preview>Close</button>`;
@@ -6898,7 +7487,7 @@ async function renderSettlementPayBatchPreview(batch) {
     const payee = batch.payee_type === "carrier" ? batch.carriers?.name : batch.drivers?.name;
     const items = batch.settlement_pay_batch_items || [];
     dialog.innerHTML = `
-      <div class="invoice-preview-toolbar"><button type="button" data-close-pay-batch-preview>Close</button><button class="primary-button" type="button" data-print-pay-batch>Print / Save PDF</button></div>
+      <div class="invoice-preview-toolbar"><button type="button" data-close-pay-batch-preview>Close</button><button type="button" data-export-pay-batch-preview>Export CSV</button><button class="primary-button" type="button" data-print-pay-batch>Print / Save PDF</button></div>
       <article class="invoice-sheet settlement-sheet">
         <header class="invoice-brand-header">
           <div class="invoice-brand"><img src="assets/cyrra-logo.png" alt="Cyrra logo"><div><strong>${escapeHtml(company.legal_name)}</strong><span>${escapeHtml([company.address_line_1, company.address_line_2].filter(Boolean).join(", "))}</span><small>${escapeHtml([company.city, company.state, company.postal_code].filter(Boolean).join(", "))}</small></div></div>
@@ -6910,6 +7499,7 @@ async function renderSettlementPayBatchPreview(batch) {
         <footer><p>${escapeHtml(batch.notes || "Pay batch for approved transportation settlements.")}</p><small>${escapeHtml(company.email || "")}${company.phone ? ` · ${escapeHtml(company.phone)}` : ""}</small></footer>
       </article>`;
     dialog.querySelector("[data-close-pay-batch-preview]").addEventListener("click", () => dialog.close());
+    dialog.querySelector("[data-export-pay-batch-preview]").addEventListener("click", () => exportSettlementPayBatchDetailCsv(batch));
     dialog.querySelector("[data-print-pay-batch]").addEventListener("click", () => { document.body.classList.add("invoice-printing"); window.print(); });
   } catch (error) {
     dialog.innerHTML = `<div class="empty-state">Pay batch preview unavailable: ${escapeHtml(error.message)}</div><button type="button" data-close-pay-batch-preview>Close</button>`;
@@ -7314,11 +7904,12 @@ async function renderNotifications() {
   const statusEl = document.querySelector("#connection-status");
   const root = document.querySelector("#notification-root");
   try {
-    const [notifications, preferences, deliveryLogs, branches] = await Promise.all([
+    const [notifications, preferences, deliveryLogs, branches, pushStatus] = await Promise.all([
       listNotifications(100),
       listNotificationPreferences(currentSession.user.id),
       listNotificationDeliveryLogs(100),
       listBranches(),
+      getPushSubscriptionStatus(),
     ]);
     const summary = notificationSummary(notifications);
     const deliverySummary = notificationDeliverySummary(deliveryLogs);
@@ -7346,12 +7937,14 @@ async function renderNotifications() {
         </div>
       </article>
       <section class="notification-settings-grid">
+        ${renderPushNotificationPanel(pushStatus)}
         ${renderNotificationPreferences(preferences)}
         ${renderNotificationDelivery(deliveryLogs, deliverySummary)}
       </section>
       ${renderNotificationComposer(branches)}
     `;
     bindNotificationEvents(notifications, preferences);
+    bindPushNotificationPanel();
     refreshNotificationBadge();
   } catch (error) {
     statusEl.dataset.state = "error";
@@ -7434,22 +8027,27 @@ function renderNotificationPreferences(preferences) {
   };
   return `
     <article class="panel notification-preferences-panel">
-      <div class="panel-header"><div><h2>Preferences</h2><p>In-app is active now; other channels are logged server-side until adapters are added.</p></div></div>
+      <div class="panel-header"><div><h2>Preferences</h2><p>In-app and push are active; email/SMS are logged server-side until adapters are added. Push also requires enabling notifications on this device below.</p></div></div>
       <form id="notification-preferences-form" class="notification-preferences-form">
         <div class="notification-preference-list">
+          <div class="notification-preference-header"><span></span><span>In-app</span><span>Push</span></div>
           ${notificationEventTypes.map((eventType) => {
             const preference = preferences.find((item) => item.event_type === eventType && !item.branch_id) || {};
             return `
-              <label class="notification-preference-row" data-preference-id="${preference.id || ""}" data-event-type="${eventType}">
+              <div class="notification-preference-row" data-preference-id="${preference.id || ""}" data-event-type="${eventType}">
                 <span class="preference-copy">
                   <strong>${escapeHtml(formatStatus(eventType))}</strong>
                   <small>${escapeHtml(eventDescriptions[eventType] || "Notification type")}</small>
                 </span>
-                <span class="preference-switch">
-                  <input name="${eventType}" type="checkbox" ${preference.in_app_enabled ?? true ? "checked" : ""}>
+                <label class="preference-switch" aria-label="In-app notifications for ${escapeAttribute(formatStatus(eventType))}">
+                  <input data-channel="in_app" type="checkbox" ${preference.in_app_enabled ?? true ? "checked" : ""}>
                   <i></i>
-                </span>
-              </label>`;
+                </label>
+                <label class="preference-switch" aria-label="Push notifications for ${escapeAttribute(formatStatus(eventType))}">
+                  <input data-channel="push" type="checkbox" ${preference.push_enabled ? "checked" : ""}>
+                  <i></i>
+                </label>
+              </div>`;
           }).join("")}
         </div>
         <div class="notification-preferences-footer">
@@ -7556,10 +8154,10 @@ async function handleSaveNotificationPreferences(event, existingPreferences) {
         user_id: currentSession.user.id,
         branch_id: null,
         event_type: row.dataset.eventType,
-        in_app_enabled: row.querySelector("input").checked,
+        in_app_enabled: row.querySelector('[data-channel="in_app"]').checked,
         email_enabled: existing?.email_enabled ?? false,
         sms_enabled: existing?.sms_enabled ?? false,
-        push_enabled: existing?.push_enabled ?? false,
+        push_enabled: row.querySelector('[data-channel="push"]').checked,
       });
     }));
     notificationNotice = "Notification preferences saved.";
@@ -7567,6 +8165,124 @@ async function handleSaveNotificationPreferences(event, existingPreferences) {
   } catch (error) {
     message.dataset.state = "error";
     message.textContent = error.message;
+  }
+}
+
+function renderSecurityCenter() {
+  pageRoot.innerHTML = `
+    ${renderPageHeader({ eyebrow: "Account", title: "Security" })}
+    <section id="security-root" class="settings-root">
+      <div class="empty-state">Loading security settings...</div>
+    </section>
+  `;
+  loadSecurityCenter();
+}
+
+async function loadSecurityCenter() {
+  const root = document.querySelector("#security-root");
+  if (!root) return;
+  try {
+    const factors = await listMfaFactors();
+    if (!document.body.contains(root)) return;
+    root.innerHTML = `
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Two-Factor Authentication</h2>
+            <p>Add an authenticator app (TOTP) to require a 6-digit code at login, in addition to your password. Optional for now.</p>
+          </div>
+          <button id="mfa-enroll-button" type="button">Add authenticator app</button>
+        </div>
+        <div id="mfa-security-message" class="form-message">${escapeHtml(securityNotice)}</div>
+        <div class="mfa-factor-list">
+          ${factors.length
+            ? factors.map(renderMfaFactorRow).join("")
+            : '<div class="empty-state compact-empty">No authenticator app added yet. Your account only requires a password to sign in.</div>'}
+        </div>
+        <div id="mfa-enroll-panel" class="mfa-enroll-panel" hidden></div>
+      </section>
+    `;
+    securityNotice = "";
+    document.querySelector("#mfa-enroll-button").addEventListener("click", startMfaEnrollment);
+    document.querySelectorAll("[data-mfa-remove]").forEach((button) => button.addEventListener("click", handleMfaFactorRemove));
+  } catch (error) {
+    if (document.body.contains(root)) {
+      root.innerHTML = `<div class="empty-state">Security settings are unavailable: ${escapeHtml(error.message)}</div>`;
+    }
+  }
+}
+
+function renderMfaFactorRow(factor) {
+  return `
+    <article class="mfa-factor-row">
+      <div>
+        <strong>${escapeHtml(factor.friendly_name || "Authenticator app")}</strong>
+        <small>Added ${formatDateTime(factor.created_at)} · ${escapeHtml(factor.status)}</small>
+      </div>
+      <button type="button" data-mfa-remove data-factor-id="${escapeAttribute(factor.id)}">Remove</button>
+    </article>
+  `;
+}
+
+async function startMfaEnrollment() {
+  const panel = document.querySelector("#mfa-enroll-panel");
+  const message = document.querySelector("#mfa-security-message");
+  if (!panel || !message) return;
+  message.textContent = "";
+  try {
+    const enrollment = await enrollMfaFactor(`Authenticator ${new Date().toISOString().slice(0, 10)}`);
+    panel.hidden = false;
+    panel.innerHTML = `
+      <div class="mfa-enroll-steps">
+        <p>Scan this QR code with your authenticator app (Google Authenticator, 1Password, Authy...), then enter the 6-digit code it shows.</p>
+        <img class="mfa-qr-image" src="${escapeAttribute(enrollment.totp.qr_code)}" alt="Authenticator QR code" />
+        <p class="mfa-secret">Can't scan? Enter this key manually: <code>${escapeHtml(enrollment.totp.secret)}</code></p>
+        <form id="mfa-verify-form" class="record-form">
+          <label><span>6-digit code</span><input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label>
+          <div class="form-actions">
+            <button type="submit">Verify and enable</button>
+            <button type="button" id="mfa-enroll-cancel">Cancel</button>
+          </div>
+          <p class="form-message"></p>
+        </form>
+      </div>
+    `;
+    document.querySelector("#mfa-verify-form").addEventListener("submit", (event) => handleMfaEnrollVerify(event, enrollment.id));
+    document.querySelector("#mfa-enroll-cancel").addEventListener("click", async () => {
+      try { await unenrollMfaFactor(enrollment.id); } catch { /* best-effort cleanup of an unverified factor */ }
+      panel.hidden = true;
+      panel.innerHTML = "";
+    });
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+async function handleMfaEnrollVerify(event, factorId) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const message = form.querySelector(".form-message");
+  const code = new FormData(form).get("code");
+  try {
+    const challenge = await challengeMfaFactor(factorId);
+    await verifyMfaFactor(factorId, challenge.id, code);
+    securityNotice = "Authenticator app added. You will be asked for a code on your next login.";
+    await loadSecurityCenter();
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+async function handleMfaFactorRemove(event) {
+  const factorId = event.currentTarget.dataset.factorId;
+  if (!window.confirm("Remove this authenticator app? You will only need your password to sign in.")) return;
+  try {
+    await unenrollMfaFactor(factorId);
+    securityNotice = "Authenticator app removed.";
+    await loadSecurityCenter();
+  } catch (error) {
+    const message = document.querySelector("#mfa-security-message");
+    if (message) message.textContent = error.message;
   }
 }
 
@@ -10990,6 +11706,12 @@ signupButton.addEventListener("click", handleSignup);
 logoutButton.addEventListener("click", async () => {
   await signOut();
 });
+mfaChallengeForm.addEventListener("submit", handleMfaChallengeSubmit);
+mfaChallengeCancelButton.addEventListener("click", async () => {
+  mfaChallengeMessage.textContent = "";
+  mfaChallengeState = null;
+  await signOut();
+});
 refreshButton.addEventListener("click", () => {
   globalSearchCache = { records: [], loadedAt: 0 };
   renderRoute();
@@ -11008,6 +11730,7 @@ document.addEventListener("click", (event) => {
 window.addEventListener("hashchange", renderRoute);
 
 onAuthStateChange(setAuthView);
+registerServiceWorker();
 
 getSession()
   .then(setAuthView)

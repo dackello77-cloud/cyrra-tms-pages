@@ -336,6 +336,179 @@ export function settlementPayBatchCandidates(settlements = [], existingBatches =
     && !batchedSettlementIds.has(settlement.id));
 }
 
+export function calculateSettlementPay(input = {}) {
+  const requestedModel = String(input.pay_type || input.payType || "financials").trim();
+  const model = ["hourly", "salary"].includes(requestedModel) ? "financials" : requestedModel;
+  const rate = numeric(input.pay_rate ?? input.payRate);
+  const loadedMiles = numeric(input.loaded_miles ?? input.loadedMiles);
+  const revenue = numeric(input.revenue);
+  const fallbackAmount = numeric(input.fallback_amount ?? input.fallbackAmount);
+  const components = input.pay_components || input.payComponents || {};
+  let amount;
+  if (model === "financials") amount = fallbackAmount;
+  else if (["flat", "per_load"].includes(model)) amount = rate;
+  else if (model === "per_mile") amount = loadedMiles * rate;
+  else if (model === "percentage") amount = revenue * rate / 100;
+  else if (model === "combined") {
+    amount = numeric(components.flat_amount)
+      + loadedMiles * numeric(components.per_mile_rate)
+      + revenue * numeric(components.percentage_rate) / 100;
+  } else throw new Error("Unsupported settlement pay model.");
+  amount = Math.round((amount + Number.EPSILON) * 100) / 100;
+  if (amount <= 0) throw new Error("Settlement pay calculation must be greater than zero.");
+  return { model, rate, loadedMiles, revenue, amount };
+}
+
+const settlementAdjustmentTypes = new Set(["reimbursement", "deduction", "correction"]);
+const settlementAdjustmentDirections = new Set(["add", "subtract"]);
+
+export function settlementAdjustmentSignedAmount(adjustment = {}) {
+  return (adjustment.direction === "subtract" ? -1 : 1) * numeric(adjustment.amount);
+}
+
+export function settlementAdjustedTotal(baseAmount = 0, adjustments = []) {
+  const total = numeric(baseAmount) + adjustments.reduce((sum, adjustment) => sum + settlementAdjustmentSignedAmount(adjustment), 0);
+  if (total < 0) throw new Error("Settlement adjustments cannot reduce total below zero.");
+  return total;
+}
+
+export function validateSettlementAdjustment(input = {}) {
+  const adjustment_type = String(input.adjustment_type || "correction").trim();
+  const direction = String(input.direction || (adjustment_type === "deduction" ? "subtract" : "add")).trim();
+  const amount = numeric(input.amount);
+  const description = String(input.description || "").trim();
+  if (!settlementAdjustmentTypes.has(adjustment_type)) throw new Error("Unsupported settlement adjustment type.");
+  if (!settlementAdjustmentDirections.has(direction)) throw new Error("Unsupported settlement adjustment direction.");
+  if (adjustment_type === "deduction" && direction !== "subtract") throw new Error("Deduction adjustments must subtract from the settlement.");
+  if (adjustment_type === "reimbursement" && direction !== "add") throw new Error("Reimbursement adjustments must add to the settlement.");
+  if (amount <= 0) throw new Error("Settlement adjustment amount must be greater than zero.");
+  if (!description) throw new Error("Settlement adjustment description is required.");
+  return {
+    id: input.id || null,
+    settlement_id: input.settlement_id || input.settlementId || null,
+    adjustment_type,
+    direction,
+    amount,
+    description,
+  };
+}
+
+export function validateSettlementPostBatchCorrection(input = {}) {
+  const original_settlement_id = String(input.original_settlement_id || input.originalSettlementId || "").trim();
+  const target_settlement_id = String(input.target_settlement_id || input.targetSettlementId || "").trim() || null;
+  const direction = String(input.direction || "add").trim();
+  const amount = numeric(input.amount);
+  const reason = String(input.reason || "").trim();
+  if (!original_settlement_id) throw new Error("Original settlement is required.");
+  if (!["add", "subtract"].includes(direction)) throw new Error("Correction direction must be add or subtract.");
+  if (amount <= 0) throw new Error("Correction amount must be greater than zero.");
+  if (!reason) throw new Error("Correction reason is required.");
+  if (direction === "subtract" && !target_settlement_id) throw new Error("Subtract corrections require a target Draft settlement.");
+  return { original_settlement_id, target_settlement_id, direction, amount, reason };
+}
+
+function settlementPayeeLabel(record = {}) {
+  return record.payee_type === "carrier" ? record.carriers?.name || "" : record.drivers?.name || "";
+}
+
+function settlementRouteLabel(load = {}) {
+  return [load.origin, load.destination].filter(Boolean).join(" -> ");
+}
+
+function isoDate(value) {
+  return value ? String(value).slice(0, 10) : "";
+}
+
+export function settlementStatementSummaryRows(settlements = []) {
+  return settlements.map((settlement) => ({
+    settlement_no: settlement.settlement_no || "",
+    payee: settlementPayeeLabel(settlement),
+    payee_type: settlement.payee_type || "",
+    status: settlement.status || "",
+    settlement_date: isoDate(settlement.settlement_date),
+    item_count: (settlement.settlement_items || []).length,
+    adjustment_count: (settlement.settlement_adjustments || []).length,
+    total_amount: numeric(settlement.total_amount).toFixed(2),
+  }));
+}
+
+export function settlementStatementDetailRows(settlement = {}) {
+  const common = {
+    settlement_no: settlement.settlement_no || "",
+    payee: settlementPayeeLabel(settlement),
+    payee_type: settlement.payee_type || "",
+    status: settlement.status || "",
+    settlement_date: isoDate(settlement.settlement_date),
+  };
+  const itemRows = (settlement.settlement_items || []).map((item) => ({
+    ...common,
+    line_type: "item",
+    load_no: item.loads?.load_no || "",
+    route: item.loads ? settlementRouteLabel(item.loads) : "",
+    description: item.description || "",
+    calculation: item.calculation_snapshot?.description || item.pay_model_snapshot || "",
+    amount: numeric(item.amount).toFixed(2),
+  }));
+  const adjustmentRows = (settlement.settlement_adjustments || []).map((adjustment) => ({
+    ...common,
+    line_type: `adjustment:${adjustment.adjustment_type || ""}`,
+    load_no: "",
+    route: "",
+    description: adjustment.description || "",
+    calculation: adjustment.direction || "",
+    amount: settlementAdjustmentSignedAmount(adjustment).toFixed(2),
+  }));
+  return [...itemRows, ...adjustmentRows, {
+    ...common,
+    line_type: "total",
+    load_no: "",
+    route: "",
+    description: "Total settlement",
+    calculation: "",
+    amount: numeric(settlement.total_amount).toFixed(2),
+  }];
+}
+
+export function settlementPayBatchSummaryRows(batches = []) {
+  return batches.map((batch) => ({
+    batch_no: batch.batch_no || "",
+    payee: settlementPayeeLabel(batch),
+    payee_type: batch.payee_type || "",
+    status: batch.status || "",
+    period_start: isoDate(batch.period_start),
+    period_end: isoDate(batch.period_end),
+    pay_date: isoDate(batch.pay_date),
+    settlement_count: numeric(batch.settlement_count),
+    total_amount: numeric(batch.total_amount).toFixed(2),
+  }));
+}
+
+export function settlementPayBatchDetailRows(batch = {}) {
+  const common = {
+    batch_no: batch.batch_no || "",
+    payee: settlementPayeeLabel(batch),
+    payee_type: batch.payee_type || "",
+    status: batch.status || "",
+    period_start: isoDate(batch.period_start),
+    period_end: isoDate(batch.period_end),
+    pay_date: isoDate(batch.pay_date),
+  };
+  const itemRows = (batch.settlement_pay_batch_items || []).map((item) => ({
+    ...common,
+    settlement_no: item.settlements?.settlement_no || "",
+    settlement_status: item.settlements?.status || "",
+    loads: (item.settlements?.settlement_items || []).map((settlementItem) => settlementItem.loads?.load_no || "").filter(Boolean).join(", "),
+    amount: numeric(item.amount_snapshot).toFixed(2),
+  }));
+  return [...itemRows, {
+    ...common,
+    settlement_no: "TOTAL",
+    settlement_status: "",
+    loads: "",
+    amount: numeric(batch.total_amount).toFixed(2),
+  }];
+}
+
 export function getMaintenanceDueState(record, equipment, today, dueSoonDate) {
   if (!["open", "scheduled"].includes(record.status)) return "closed";
   const dueMiles = record.due_miles === null || record.due_miles === undefined ? null : numeric(record.due_miles);
@@ -388,6 +561,7 @@ export const tmsPermissionRoles = {
   view_customer_portal: ["customer_portal"],
   view_carrier_portal: ["carrier_portal"],
   view_settings: ["owner"],
+  view_security: ["owner", "admin"],
   view_audit: ["owner", "admin"],
   manage_operations: ["owner", "admin", "dispatcher"],
   manage_quotes: ["owner", "admin", "dispatcher", "accounting"],
@@ -957,4 +1131,10 @@ export function validateFacilityInput(facility) {
 export function hasTmsPermission(roles, permission) {
   const allowed = tmsPermissionRoles[permission] || [];
   return roles.some((role) => allowed.includes(role));
+}
+
+export function mfaChallengeRequired(assuranceLevel) {
+  const currentLevel = assuranceLevel?.currentLevel || null;
+  const nextLevel = assuranceLevel?.nextLevel || null;
+  return Boolean(nextLevel) && nextLevel !== currentLevel && nextLevel === "aal2";
 }

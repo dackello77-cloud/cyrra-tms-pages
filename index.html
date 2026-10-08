@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cyrra TMS</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260728-1" />
+    <link rel="stylesheet" href="css/styles.css?v=20261008-1" />
   </head>
   <body>
     <section id="auth-screen" class="auth-screen" hidden>
@@ -29,6 +29,28 @@
           <button id="signup-button" type="button">Create test account</button>
         </div>
         <p id="login-message" class="form-message"></p>
+      </form>
+    </section>
+
+    <section id="mfa-challenge-screen" class="auth-screen" hidden>
+      <form id="mfa-challenge-form" class="login-panel">
+        <div class="brand login-brand">
+          <img class="brand-logo" src="assets/cyrra-logo.png" alt="Cyrra logo" />
+          <div>
+            <strong>Cyrra TMS</strong>
+            <small>Two-factor verification</small>
+          </div>
+        </div>
+        <p>Enter the 6-digit code from your authenticator app.</p>
+        <label>
+          <span>Authentication code</span>
+          <input id="mfa-challenge-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required />
+        </label>
+        <div class="auth-actions">
+          <button type="submit">Verify</button>
+          <button id="mfa-challenge-cancel" type="button">Sign out</button>
+        </div>
+        <p id="mfa-challenge-message" class="form-message"></p>
       </form>
     </section>
 
@@ -78,6 +100,7 @@
               <a href="#settlements" data-route="settlements">Settlements</a>
               <a href="#notifications" data-route="notifications">Notifications <span id="nav-notification-count" class="nav-count" hidden>0</span></a>
               <a href="#reports" data-route="reports">Reports</a>
+              <a href="#security" data-route="security">Security</a>
               <a href="#settings" data-route="settings">Settings</a>
             </div>
           </details>
@@ -117,6 +140,6 @@
       </main>
     </div>
 
-    <script type="module" src="js/app.js?v=20260728-1"></script>
+    <script type="module" src="js/app.js?v=20261008-1"></script>
   </body>
 </html>
